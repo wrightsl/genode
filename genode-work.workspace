@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeLite_Workspace Name="genode-work" Database="" Version="10.0.0">
+  <Project Name="genode-work" Path="genode-work.project" Active="Yes"/>
+  <Project Name="wrightsl" Path="repos/wrightsl.project"/>
+  <Project Name="Risc5-emu" Path="../../../../../slw/Develop/git/wrightsl/genode/contrib/risc5-emu-a79fddb111642365db15fb73dcfb0ca783d063c8/src/app/risc5-emu/src/Risc5-emu.project" Active="No"/>
+  <BuildMatrix>
+    <WorkspaceConfiguration Name="Debug" Selected="yes">
+      <Environment/>
+      <Project Name="genode-work" ConfigName="Debug"/>
+      <Project Name="wrightsl-work" ConfigName="Debug"/>
+      <Project Name="wrightsl" ConfigName="Debug"/>
+      <Project Name="Risc5-emu" ConfigName="Debug"/>
+    </WorkspaceConfiguration>
+    <WorkspaceConfiguration Name="Release" Selected="yes">
+      <Environment/>
+      <Project Name="genode-work" ConfigName="Debug"/>
+      <Project Name="wrightsl-work" ConfigName="Debug"/>
+      <Project Name="wrightsl" ConfigName="Debug"/>
+      <Project Name="Risc5-emu" ConfigName="Release"/>
+    </WorkspaceConfiguration>
+  </BuildMatrix>
+</CodeLite_Workspace>
