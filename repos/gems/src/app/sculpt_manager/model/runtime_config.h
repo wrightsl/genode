@@ -83,7 +83,20 @@ class Sculpt::Runtime_config
 				}
 
 				if (service == "ROM") {
-					bool const interesting_rom = !dst_label.valid();
+
+					/*
+					 * ROM sessions for plain binaries (e.g, as requested by
+					 * the sculpt-managed inspect or part_block instances) are
+					 * not interesting for the graph. Non-sculpt-managed
+					 * subsystems can only be connected to the few ROMs
+					 * whitelisted in the 'Parent_services' definition below.
+					 */
+					bool const interesting_rom =
+						dst_label.valid() &&
+						(strcmp("config", dst_label.string(), 5) == 0 ||
+						 dst_label == "platform_info" ||
+						 dst_label == "capslock");
+
 					if (interesting_rom) {
 						result = "info";
 						return;
@@ -309,7 +322,11 @@ class Sculpt::Runtime_config
 				_vimrc     { _r, Type::ROM,         "default vim configuration",      "config -> vimrc" },
 				_fonts     { _r, Type::ROM,         "system font configuration",      "config -> managed/fonts" },
 				_pf_info   { _r, Type::ROM,         "platform information",           "platform_info" },
+				_system    { _r, Type::ROM,         "system status",                  "config -> system" },
 				_report    { _r, Type::REPORT,      "system reports" },
+				_shape     { _r, Type::REPORT,      "pointer shape",    "shape",     Service::Match_label::LAST },
+				_copy      { _r, Type::REPORT,      "global clipboard", "clipboard", Service::Match_label::LAST },
+				_paste     { _r, Type::ROM,         "global clipboard", "clipboard", Service::Match_label::LAST },
 				_rm        { _r, Type::RM,          "custom virtual memory objects" },
 				_io_mem    { _r, Type::IO_MEM,      "raw hardware access" },
 				_io_port   { _r, Type::IO_PORT,     "raw hardware access" },

@@ -26,6 +26,7 @@
 #include <model/capacity.h>
 #include <model/popup.h>
 #include <model/runtime_config.h>
+#include <string.h>
 
 namespace Sculpt { struct Graph; }
 
@@ -96,7 +97,7 @@ struct Sculpt::Graph
 	{
 		gen_named_node(xml, "frame", name, [&] () {
 			xml.node("label", [&] () {
-				xml.attribute("text", name); }); });
+				xml.attribute("text", Start_name(" ", name, " ")); }); });
 	}
 
 	void _gen_graph_dialog()
@@ -124,13 +125,20 @@ struct Sculpt::Graph
 
 				typedef Runtime_config::Component Component;
 
+				bool const any_selected = _runtime_state.selected().valid();
+
 				_runtime_config.for_each_component([&] (Component const &component) {
 
 					Start_name const name = component.name;
+					Start_name const pretty_name { Pretty(name) };
 
 					/* omit sculpt's helpers from the graph */
 					bool const blacklisted = (name == "runtime_view"
 					                       || name == "launcher_query"
+					                       || name == "update"
+					                       || name == "fs_tool"
+					                       || name == "depot_rw"
+					                       || name == "public_rw"
 					                       || name == "depot_rom"
 					                       || name == "dynamic_depot_rom"
 					                       || name == "depot_query");
@@ -139,26 +147,38 @@ struct Sculpt::Graph
 
 					Runtime_state::Info const info = _runtime_state.info(name);
 
+					bool const unimportant = any_selected && !info.tcb;
+
 					gen_named_node(xml, "frame", name, [&] () {
+
+						if (unimportant)
+							xml.attribute("style", "unimportant");
 
 						Start_name primary_dep = component.primary_dependency;
 
 						if (primary_dep == "default_fs_rw")
 							primary_dep = _sculpt_partition.fs();
 
-						if (primary_dep.valid())
+						if (primary_dep.valid()) {
 							xml.attribute("dep", primary_dep);
+							if (unimportant)
+								xml.attribute("dep_visible", false);
+						}
 
 						xml.node("vbox", [&] () {
 
 							gen_named_node(xml, "button", name, [&] () {
+
+								if (unimportant)
+									xml.attribute("style", "unimportant");
+
 								_node_button_item.gen_button_attr(xml, name);
 
 								if (info.selected)
 									xml.attribute("selected", "yes");
 
 								xml.node("label", [&] () {
-									xml.attribute("text", name);
+									xml.attribute("text", pretty_name);
 								});
 							});
 
@@ -179,14 +199,7 @@ struct Sculpt::Graph
 					if (show_details) {
 						component.for_each_secondary_dep([&] (Start_name const &dep) {
 
-							/*
-							 * Connections to depot_rom do not reveal any
-							 * interesting information but create a lot of
-							 * noise.
-							 */
-							bool const blacklisted = (dep == "depot_rom")
-							                      || (dep == "dynamic_depot_rom");
-							if (blacklisted)
+							if (Runtime_state::blacklisted_from_graph(dep))
 								return;
 
 							xml.node("dep", [&] () {

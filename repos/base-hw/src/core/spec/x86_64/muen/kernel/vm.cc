@@ -17,13 +17,13 @@
 #include <platform_pd.h>
 #include <kernel/cpu.h>
 #include <kernel/vm.h>
-#include <cpu/cpu_state.h>
+#include <kernel/vm_state.h>
 #include <pic.h>
 
 Kernel::Vm::Vm(void * const state, Kernel::Signal_context * const context,
                void * const)
 : Cpu_job(Cpu_priority::MIN, 0),
-  _state((Genode::Vm_state * const) state),
+  _state((Genode::Vm_state *) state),
   _context(context),
   _table(nullptr)
 {
@@ -49,8 +49,8 @@ void Kernel::Vm::exception(Cpu & cpu)
 		_context->submit(1);
 		return;
 	}
-	Genode::warning("VM: triggered unknown exception ", _state->trapno,
-	                " with error code ", _state->errcode);
+	Genode::raw("VM: triggered unknown exception ", _state->trapno,
+	            " with error code ", _state->errcode);
 
 	ASSERT_NEVER_CALLED;
 }

@@ -4,6 +4,98 @@
                                ===========
 
 
+Genode OS Framework release 19.05 | 2019-05-29
+##############################################
+
+| The highlights of version 19.05 are a new kernel-agnostic virtualization
+| interface, initial support for the 64-bit ARM architecture, the use of
+| C++17 by default, a new tool chain based on GCC 8.3, updated C and SPARK
+| runtimes, and the consolidation of build directories across boards.
+
+We dedicated the release cycle of Genode 19.05 to platform topics at various
+levels. The flagship feature is certainly the introduction of our
+kernel-agnostic virtualization interface. It has been in the works for more
+than a half year and gives us the prospect of running virtual machine monitors
+like Seoul and VirtualBox seamlessly across Genode's supported kernels.
+
+The second major theme is the extension of Genode's CPU-architecture support
+to 64-bit ARM (AARCH64). This step motivated the update of many parts of the
+framework's fundamental infrastructure, ranging from the tool chain (updated
+to GCC 8.3), over the C runtime (updated to FreeBSD 12 libc), to the dynamic
+linker. The new tool chain, in turn, paved the ground for enabling C++17 by
+default.
+
+With the diversity of kernels, CPU architectures, and boards growing, we are
+constantly striving to remove friction and redundancies between Genode's
+underlying platforms. The current release eventually consolidates the build
+directories not only across kernels but also across all boards of a given
+CPU architecture. This vastly increases the velocity of Genode-based system
+scenarios when targeting multiple boards or emulators at the same time.
+
+Further details about these and many more improvements are given in the
+[https:/documentation/release-notes/19.05 - release documentation of version 19.05...]
+
+
+Sculpt as a Community Experience | 2019-03-19
+#############################################
+
+| The fourth stage of Sculpt OS introduces a new federated software
+| provisioning model while giving the user full control over the
+| component deployment via a novel graphical user interface.
+
+With Sculpt CE, we enter the final stage of the evolution of Sculpt OS as
+envisioned roughly one year ago. Initially geared towards die-hard enthusiasts
+only, each revision became more and more user friendly. The previous version
+Sculpt VC already offered a glimpse of Sculpt's unique user interface in the
+form of an interactive component graph.
+
+The just released Sculpt OS "as a community experience" (CE) combines this
+tangible notion of component compositions with a completely federated software
+provisioning model that cuts out middlemen like an app store or a
+distribution. With Sculpt CE, components can be offered by a federation of
+independent software providers selectable by the user. The software
+installation is sandboxed and protected via digital signatures. The
+integration of components with the rest of the system is completely under
+control by the user. With the principle of least privilege at the heart
+of Sculpt's architecture, you - the user - can fearlessly install and run
+software without the need to ultimately trust the software providers.
+
+Sculpt CE is intended to work in tandem with the new community blog
+[https://genodians.org - Genodians.org] where developers and users exchange
+experiences and announce new software. The best way to watch how the
+Sculpt story continues is the RSS feed of Genodians.org.
+
+To dive into the new world of Sculpt CE,
+[https://genode.org/download/sculpt - download Sculpt OS...]
+
+
+Genodians.org | 2019-03-08
+##########################
+
+| Genodians.org is the new place to be for getting the latest news and stories
+| around Genode. It is a federated blog by and for developers and users
+| alike.
+
+With [https://genodians.org - Genodians.org], the Genode community has gained
+a new place for exchanging ideas, announcing current developments, giving
+tutorials, and sharing experience stories. In contrast to the formal character
+of Genode's regular release notes, the articles at Genodians.org are raw and
+personal, authored by individuals with no editorial process. For feedback
+about the articles, readers are invited to the new
+[https://reddit.com/r/genode - /r/genode] subreddit.
+
+As written in the
+[http://genodians.org/nfeske/2019-01-07-welcome - initial posting],
+Genode users and developers are warmly invited to join the authors at
+Genodians.org!
+
+As a side note, the blogging platform is based on the Genode OS framework and
+is of course open source
+([https://github.com/genodelabs/genodians.org - GitHub repository]).
+
+[https://genodians.org - Visit Genodians.org...]
+
+
 Genode OS Framework release 19.02 | 2019-02-28
 ##############################################
 

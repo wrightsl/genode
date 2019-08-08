@@ -25,11 +25,9 @@ struct Bootstrap::Cpu : Hw::Arm_cpu
 		static void init()
 		{
 			/*
-			 * disable alignment checks and
 			 * set exception vector to 0xffff0000
 			 */
 			access_t v = read();
-			A::set(v, 0);
 			V::set(v, 1);
 			write(v);
 		}
@@ -55,6 +53,9 @@ struct Bootstrap::Cpu : Hw::Arm_cpu
 	static void wake_up_all_cpus(void * const ip);
 
 	static void enable_mmu_and_caches(Genode::addr_t table);
+
+	static void clean_invalidate_data_cache();
+	static void invalidate_data_cache();
 };
 
 #endif /* _SRC__BOOTSTRAP__SPEC__ARM__CPU_H_ */

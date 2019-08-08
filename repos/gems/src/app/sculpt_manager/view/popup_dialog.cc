@@ -12,6 +12,7 @@
  */
 
 #include <view/popup_dialog.h>
+#include <string.h>
 
 using namespace Sculpt;
 
@@ -19,10 +20,12 @@ using namespace Sculpt;
 void Popup_dialog::_gen_pkg_info(Xml_generator &xml,
                                  Component const &component) const
 {
-	gen_named_node(xml, "label", "info", [&] () {
-		xml.attribute("text", Component::Info(" ", component.info, " ")); });
+	if (component.info.length() > 1) {
+		gen_named_node(xml, "label", "info", [&] () {
+			xml.attribute("text", Component::Info(" ", component.info, " ")); });
 
-	_gen_info_label(xml, "pad1", "");
+		_gen_info_label(xml, "pad1", "");
+	}
 	_gen_info_label(xml, "path", component.path);
 }
 
@@ -32,7 +35,7 @@ void Popup_dialog::_gen_pkg_elements(Xml_generator &xml,
 {
 	typedef Component::Info Info;
 
-	_gen_sub_menu_title(xml, "back", Menu::Name("Add ", _construction_name));
+	_gen_sub_menu_title(xml, "back", Menu::Name("Add ", Pretty(_construction_name)));
 
 	_gen_pkg_info(xml, component);
 
@@ -107,7 +110,7 @@ void Popup_dialog::_gen_menu_elements(Xml_generator &xml) const
 			if (_runtime_info.present_in_runtime(info.path))
 				return;
 
-			_gen_menu_entry(xml, info.path, info.path, false);
+			_gen_menu_entry(xml, info.path, Pretty(info.path), false);
 		});
 
 		_gen_menu_entry(xml, "depot", "Depot ...", false);
@@ -197,12 +200,12 @@ void Popup_dialog::_gen_menu_elements(Xml_generator &xml) const
 						selected = true;
 				});
 
-				String<100> const text(name, " " "(", version, ")",
-				                       installing ? " installing... " : "...");
+				String<100> const text(Pretty(name), " " "(", version, ")",
+				                       installing ? " installing... " : "... ");
 
 				_gen_menu_entry(xml, id, text, selected);
 
-				if (selected && _pkg_missing && !installing) {
+				if (selected && !installing) {
 
 					_construction_info.with_construction([&] (Component const &component) {
 
@@ -210,7 +213,25 @@ void Popup_dialog::_gen_menu_elements(Xml_generator &xml) const
 
 							gen_named_node(xml, "vbox", "vbox", [&] () {
 
-								if (_nic_ready()) {
+								/*
+								 * Package is installed but content is missing
+								 *
+								 * This can happen when the pkg's runtime is
+								 * inconsistent with the content contained in
+								 * the pkg's archives.
+								 */
+								if (!_pkg_missing && _pkg_rom_missing) {
+									_gen_info_label(xml, "pad2", "");
+									_gen_info_label(xml, "path", component.path);
+									_gen_info_label(xml, "pad3", "");
+									xml.node("label", [&] () {
+										xml.attribute("text", "installed but incomplete"); });
+								}
+
+								/*
+								 * Package is missing but can be installed
+								 */
+								else if (_pkg_missing && _nic_ready()) {
 
 									_gen_pkg_info(xml, component);
 									_gen_info_label(xml, "pad2", "");
@@ -223,8 +244,13 @@ void Popup_dialog::_gen_menu_elements(Xml_generator &xml) const
 											});
 										});
 									});
+								}
 
-								} else {
+								/*
+								 * Package is missing and we cannot do anything
+								 * about it
+								 */
+								else if (_pkg_missing) {
 									_gen_info_label(xml, "pad2", "");
 									_gen_info_label(xml, "path", component.path);
 									_gen_info_label(xml, "pad3", "");
@@ -254,7 +280,6 @@ void Popup_dialog::_gen_menu_elements(Xml_generator &xml) const
 void Popup_dialog::click(Action &action)
 {
 	Hoverable_item::Id const clicked = _item._hovered;
-	_item._hovered = Hoverable_item::Id();
 
 	_action_item .propose_activation_on_click();
 	_install_item.propose_activation_on_click();
@@ -305,6 +330,8 @@ void Popup_dialog::click(Action &action)
 
 			if (!_index_avail(clicked))
 				action.trigger_download(_index_path(clicked));
+			else
+				action.remove_index(clicked);
 		}
 	}
 

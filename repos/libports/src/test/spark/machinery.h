@@ -17,9 +17,16 @@ namespace Spark {
 	 *
 	 * \param BYTES  size of the SPARK record in bytes
 	 */
-	template <Genode::size_t BYTES>
+	template <Genode::uint32_t BYTES>
 	struct Object
 	{
+		/**
+		 * Exception type
+		 */
+		struct Object_size_mismatch { };
+
+		static constexpr Genode::uint32_t bytes() { return BYTES; }
+
 		long _space[(BYTES + sizeof(long) - 1)/sizeof(long)] { };
 	};
 
@@ -31,12 +38,23 @@ namespace Spark {
 
 		Genode::uint32_t temperature() const;
 	};
+
+	Genode::uint32_t object_size(Machinery const &);
+
+	template <typename T>
+	static inline void assert_valid_object_size()
+	{
+		if (object_size(*(T *)nullptr) > T::bytes())
+			throw typename T::Object_size_mismatch();
+	}
 }
 
 
 static inline void test_spark_object_construction()
 {
 	using namespace Genode;
+
+	Spark::assert_valid_object_size<Spark::Machinery>();
 
 	Spark::Machinery machinery { };
 

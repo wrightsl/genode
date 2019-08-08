@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2011-2017 Genode Labs GmbH
+ * Copyright (C) 2011-2019 Genode Labs GmbH
  *
  * This file is part of the Genode OS framework, which is distributed
  * under the terms of the GNU Affero General Public License version 3.
@@ -125,12 +125,12 @@ class Vfs::Dir_file_system : public File_system
 			}
 
 			/**
-			 * Propagate the handle context to each sub-handle
+			 * Propagate the response handler to each sub-handle
 			 */
-			void context(Context *ctx) override
+			void handler(Watch_response_handler *h) override
 			{
 				handle_registry.for_each( [&] (Watch_handle_element &elem) {
-					elem.watch_handle.context(ctx); } );
+					elem.watch_handle.handler(h); } );
 			}
 		};
 
@@ -313,8 +313,9 @@ class Vfs::Dir_file_system : public File_system
 					index = index - base;
 					vfs_handle.seek(index * sizeof(Dirent));
 
-					/* forward the handle context */
-					vfs_handle.context = dir_vfs_handle->context;
+					/* forward the response handler */
+					dir_vfs_handle->apply_handler([&] (Vfs::Io_response_handler &h) {
+						vfs_handle.handler(&h); });
 
 					result = vfs_handle.fs().queue_read(&vfs_handle, sizeof(Dirent));
 				}
@@ -536,7 +537,7 @@ class Vfs::Dir_file_system : public File_system
 		{
 			path = _sub_path(path);
 			if (!path)
-				return 0;
+				return nullptr;
 
 			if (strlen(path) == 0)
 				return path;
@@ -547,7 +548,7 @@ class Vfs::Dir_file_system : public File_system
 					return leaf_path;
 			}
 
-			return 0;
+			return nullptr;
 		}
 
 		Open_result open(char const  *path,
@@ -686,6 +687,9 @@ class Vfs::Dir_file_system : public File_system
 				return OPENDIR_ERR_LOOKUP_FAILED;
 
 			if (create) {
+				if (leaf_path(path) != nullptr)
+					return OPENDIR_ERR_NODE_ALREADY_EXISTS;
+
 				auto opendir_fn = [&] (File_system &fs, char const *path)
 				{
 					Vfs_handle *tmp_handle;
@@ -947,8 +951,9 @@ class Vfs::Dir_file_system : public File_system
 				static_cast<Dir_vfs_handle*>(vfs_handle);
 
 			auto f = [&result, dir_vfs_handle] (Dir_vfs_handle::Subdir_handle_element &e) {
-				/* forward the handle context */
-				e.vfs_handle.context = dir_vfs_handle->context;
+				/* forward the response handler */
+				dir_vfs_handle->apply_handler([&] (Io_response_handler &h) {
+					e.vfs_handle.handler(&h); });
 				e.synced = false;
 
 				if (!e.vfs_handle.fs().queue_sync(&e.vfs_handle)) {

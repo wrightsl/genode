@@ -13,6 +13,7 @@
 
 #include <base/log.h>
 #include <hw/assert.h>
+#include <cpu/vm_state_virtualization.h>
 
 #include <platform_pd.h>
 #include <kernel/cpu.h>
@@ -69,7 +70,7 @@ struct Kernel::Vm_irq : Kernel::Irq
 		Cpu_job & job = cpu_pool().executing_cpu().scheduled_job();
 		Vm *vm = dynamic_cast<Vm*>(&job);
 		if (!vm)
-			Genode::error("VM timer interrupt while VM is not runnning!");
+			Genode::raw("VM timer interrupt while VM is not runnning!");
 		else
 			vm->inject_irq(_irq_nr);
 	}
@@ -91,7 +92,7 @@ struct Kernel::Virtual_pic : Genode::Mmio
 	Vm_irq irq { Board::VT_MAINTAINANCE_IRQ };
 
 	Virtual_pic()
-	: Genode::Mmio(Genode::Platform::mmio_to_virt(Board::IRQ_CONTROLLER_VT_CTRL_BASE)) { }
+	: Genode::Mmio(Genode::Platform::mmio_to_virt(Board::Cpu_mmio::IRQ_CONTROLLER_VT_CTRL_BASE)) { }
 
 	static Virtual_pic& pic()
 	{
@@ -209,7 +210,7 @@ Kernel::Vm::Vm(void                   * const state,
                void                   * const table)
 :  Cpu_job(Cpu_priority::MIN, 0),
   _id(alloc().alloc()),
-  _state((Genode::Vm_state * const)state),
+  _state((Genode::Vm_state *)state),
   _context(context),
   _table(table)
 {

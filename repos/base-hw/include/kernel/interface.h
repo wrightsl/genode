@@ -32,15 +32,15 @@ namespace Kernel
 	constexpr Call_arg call_id_kill_signal_context()      { return  6; }
 	constexpr Call_arg call_id_submit_signal()            { return  7; }
 	constexpr Call_arg call_id_await_signal()             { return  8; }
-	constexpr Call_arg call_id_cancel_next_await_signal() { return  9; }
-	constexpr Call_arg call_id_ack_signal()               { return 10; }
-	constexpr Call_arg call_id_print_char()               { return 11; }
-	constexpr Call_arg call_id_update_data_region()       { return 12; }
-	constexpr Call_arg call_id_update_instr_region()      { return 13; }
-	constexpr Call_arg call_id_ack_cap()                  { return 14; }
-	constexpr Call_arg call_id_delete_cap()               { return 15; }
-	constexpr Call_arg call_id_timeout()                  { return 16; }
-	constexpr Call_arg call_id_timeout_age_us()           { return 17; }
+	constexpr Call_arg call_id_pending_signal()           { return  9; }
+	constexpr Call_arg call_id_cancel_next_await_signal() { return 10; }
+	constexpr Call_arg call_id_ack_signal()               { return 11; }
+	constexpr Call_arg call_id_print_char()               { return 12; }
+	constexpr Call_arg call_id_update_data_region()       { return 13; }
+	constexpr Call_arg call_id_update_instr_region()      { return 14; }
+	constexpr Call_arg call_id_ack_cap()                  { return 15; }
+	constexpr Call_arg call_id_delete_cap()               { return 16; }
+	constexpr Call_arg call_id_timeout()                  { return 17; }
 	constexpr Call_arg call_id_timeout_max_us()           { return 18; }
 	constexpr Call_arg call_id_time()                     { return 19; }
 
@@ -80,6 +80,8 @@ namespace Kernel
 	              Call_arg arg_4,
 	              Call_arg arg_5);
 
+	Call_ret_64 call64(Call_arg arg_0);
+
 
 	/**
 	 * Install timeout for calling thread
@@ -90,20 +92,9 @@ namespace Kernel
 	 * This call always overwrites the last timeout installed by the thread
 	 * if any.
 	 */
-	inline int timeout(time_t const duration_us, capid_t const sigid)
+	inline int timeout(timeout_t const duration_us, capid_t const sigid)
 	{
 		return call(call_id_timeout(), duration_us, sigid);
-	}
-
-
-	/**
-	 * Return time in microseconds since the caller installed its last timeout
-	 *
-	 * Must not be called if the installation is older than 'timeout_max_us'.
-	 */
-	inline time_t timeout_age_us()
-	{
-		return call(call_id_timeout_age_us());
 	}
 
 
@@ -115,7 +106,7 @@ namespace Kernel
 	 */
 	inline time_t time()
 	{
-		return call(call_id_time());
+		return call64(call_id_time());
 	}
 
 
@@ -127,7 +118,7 @@ namespace Kernel
 	 */
 	inline time_t timeout_max_us()
 	{
-		return call(call_id_timeout_max_us());
+		return call64(call_id_timeout_max_us());
 	}
 
 
@@ -294,6 +285,25 @@ namespace Kernel
 	{
 		return call(call_id_await_signal(), receiver_id);
 	}
+
+
+	/**
+	 * Check for any pending signal of a context of a receiver the calling
+	 * thread relates to
+	 *
+	 * \param receiver_id  capability id of the targeted signal receiver
+	 *
+	 * \retval  0  suceeded
+	 * \retval -1  failed
+	 *
+	 * If this call returns 0, an instance of 'Signal::Data' is located at the
+	 * base of the callers UTCB.
+	 */
+	inline int pending_signal(capid_t const receiver_id)
+	{
+		return call(call_id_pending_signal(), receiver_id);
+	}
+
 
 	/**
 	 * Request to cancel the next signal blocking of a local thread

@@ -17,6 +17,8 @@
 #include <base/attached_rom_dataspace.h>
 #include <os/reporter.h>
 #include <nitpicker_session/connection.h>
+#include <vm_session/vm_session.h>
+#include <timer_session/connection.h>
 
 /* included from depot_deploy tool */
 #include <children.h>
@@ -24,6 +26,7 @@
 /* local includes */
 #include <model/runtime_state.h>
 #include <model/child_exit_state.h>
+#include <model/file_operation_queue.h>
 #include <view/download_status.h>
 #include <view/popup_dialog.h>
 #include <gui.h>
@@ -49,6 +52,8 @@ struct Sculpt::Main : Input_event_handler,
 	Env &_env;
 
 	Heap _heap { _env.ram(), _env.rm() };
+
+	Sculpt_version const _sculpt_version { _env };
 
 	Constructible<Nitpicker::Connection> _nitpicker { };
 
@@ -188,6 +193,10 @@ struct Sculpt::Main : Input_event_handler,
 
 	Download_queue _download_queue { _heap };
 
+	File_operation_queue _file_operation_queue { _heap };
+
+	Fs_tool_version _fs_tool_version { 0 };
+
 
 	/*****************
 	 ** Depot query **
@@ -205,14 +214,15 @@ struct Sculpt::Main : Input_event_handler,
 		return _query_version;
 	}
 
-	/**
-	 * Depot_query interface
-	 */
-	void trigger_depot_query() override
-	{
-		_query_version.value++;
+	Timer::Connection _timer { _env };
 
+	Timer::One_shot_timeout<Main> _deferred_depot_query_handler {
+		_timer, *this, &Main::_handle_deferred_depot_query };
+
+	void _handle_deferred_depot_query(Duration)
+	{
 		if (_deploy._arch.valid()) {
+			_query_version.value++;
 			_depot_query_reporter.generate([&] (Xml_generator &xml) {
 				xml.attribute("arch",    _deploy._arch);
 				xml.attribute("version", _query_version.value);
@@ -223,6 +233,21 @@ struct Sculpt::Main : Input_event_handler,
 				_deploy.gen_depot_query(xml);
 			});
 		}
+	}
+
+	/**
+	 * Depot_query interface
+	 */
+	void trigger_depot_query() override
+	{
+		/*
+		 * Defer the submission of the query for a few milliseconds because
+		 * 'trigger_depot_query' may be consecutively called several times
+		 * while evaluating different conditions. Without deferring, the depot
+		 * query component would produce intermediate results that take time
+		 * but are ultimately discarded.
+		 */
+		_deferred_depot_query_handler.schedule(Microseconds{5000});
 	}
 
 
@@ -240,6 +265,16 @@ struct Sculpt::Main : Input_event_handler,
 		_blueprint_rom.update();
 
 		Xml_node const blueprint = _blueprint_rom.xml();
+
+		/*
+		 * Drop intermediate results that will be superseded by a newer query.
+		 * This is important because an outdated blueprint would be disregarded
+		 * by 'handle_deploy' anyway while at the same time a new query is
+		 * issued. This can result a feedback loop where blueprints are
+		 * requested but never applied.
+		 */
+		if (blueprint.attribute_value("version", 0U) != _query_version.value)
+			return;
 
 		_runtime_state.apply_to_construction([&] (Component &component) {
 			_popup_dialog.apply_blueprint(component, blueprint); });
@@ -397,7 +432,7 @@ struct Sculpt::Main : Input_event_handler,
 
 	Attached_rom_dataspace _runtime_state_rom { _env, "report -> runtime/state" };
 
-	Runtime_state _runtime_state { _heap };
+	Runtime_state _runtime_state { _heap, _storage._sculpt_partition };
 
 	Managed_config<Main> _runtime_config {
 		_env, "config", "runtime", *this, &Main::_handle_runtime };
@@ -466,11 +501,14 @@ struct Sculpt::Main : Input_event_handler,
 	 */
 	void handle_input_event(Input::Event const &ev) override
 	{
+		bool need_generate_dialog = false;
+
 		if (ev.key_press(Input::BTN_LEFT)) {
 
 			if (_hovered_dialog != _last_clicked && _hovered_dialog != Hovered::NONE) {
 				_last_clicked = _hovered_dialog;
 				_handle_window_layout();
+				need_generate_dialog = true;
 			}
 
 			if (_hovered_dialog == Hovered::STORAGE) _storage.dialog.click(_storage);
@@ -509,6 +547,9 @@ struct Sculpt::Main : Input_event_handler,
 
 		if (ev.press())
 			_keyboard_focus.update();
+
+		if (need_generate_dialog)
+			generate_dialog();
 	}
 
 	/*
@@ -587,6 +628,21 @@ struct Sculpt::Main : Input_event_handler,
 
 		/* incorporate new download-queue content into update */
 		_deploy.update_installation();
+
+		generate_runtime_config();
+	}
+
+	void remove_index(Depot::Archive::User const &user) override
+	{
+		auto remove = [&] (Path const &path) {
+			_file_operation_queue.remove_file(path); };
+
+		remove(Path("/rw/depot/",  user, "/index/", _sculpt_version));
+		remove(Path("/rw/public/", user, "/index/", _sculpt_version, ".xz"));
+		remove(Path("/rw/public/", user, "/index/", _sculpt_version, ".xz.sig"));
+
+		if (!_file_operation_queue.any_operation_in_progress())
+			_file_operation_queue.schedule_next_operations();
 
 		generate_runtime_config();
 	}
@@ -835,12 +891,14 @@ void Sculpt::Main::_handle_window_layout()
 		_with_window(window_list, Label("gui -> menu -> "), [&] (Xml_node win) {
 			gen_window(win, menu); });
 
-		/* calculate centered runtime view within the available main (inspect) area */
-		Rect runtime_view;
+		/*
+		 * Calculate centered runtime view within the available main (inspect)
+		 * area.
+		 */
+		Point runtime_view_pos { };
 		_with_window(window_list, runtime_view_label, [&] (Xml_node win) {
-			Area  const size = constrained_win_size(win);
-			Point const pos  = Rect(inspect_p1, inspect_p2).center(size);
-			runtime_view = Rect(pos, size);
+			Area const size  = constrained_win_size(win);
+			runtime_view_pos = Rect(inspect_p1, inspect_p2).center(size);
 		});
 
 		if (_popup.state == Popup::VISIBLE) {
@@ -849,29 +907,26 @@ void Sculpt::Main::_handle_window_layout()
 
 				int const anchor_y_center = (_popup.anchor.y1() + _popup.anchor.y2())/2;
 
-				int const x = runtime_view.x1() + _popup.anchor.x2();
-				int const y = max(0, runtime_view.y1() + anchor_y_center - (int)size.h()/2);
+				int const x = runtime_view_pos.x() + _popup.anchor.x2();
+				int const y = max(0, runtime_view_pos.y() + anchor_y_center - (int)size.h()/2);
 
 				gen_window(win, Rect(Point(x, y), size));
 			});
 		}
 
-		_with_window(window_list, Label("log"), [&] (Xml_node win) {
-			gen_window(win, Rect(log_p1, log_p2)); });
-
-		if (_last_clicked == Hovered::STORAGE) {
+		if (_last_clicked == Hovered::STORAGE)
 			_with_window(window_list, inspect_label, [&] (Xml_node win) {
 				gen_window(win, Rect(inspect_p1, inspect_p2)); });
-		}
 
+		/*
+		 * Position runtime view centered within the inspect area, but allow
+		 * the overlapping of the log area. (use the menu view's 'win_size').
+		 */
 		_with_window(window_list, runtime_view_label, [&] (Xml_node win) {
+			gen_window(win, Rect(runtime_view_pos, win_size(win))); });
 
-			/* center runtime view within the available main (inspect) area */
-			Area  const size = constrained_win_size(win);
-			Point const pos  = Rect(inspect_p1, inspect_p2).center(size);
-
-			gen_window(win, Rect(pos, size));
-		});
+		_with_window(window_list, Label("log"), [&] (Xml_node win) {
+			gen_window(win, Rect(log_p1, log_p2)); });
 	});
 
 	/* define window-manager focus */
@@ -902,6 +957,8 @@ void Sculpt::Main::_handle_nitpicker_mode()
 		_gui.font_size(text_size);
 
 		_fonts_config.generate([&] (Xml_generator &xml) {
+			xml.attribute("copy",  true);
+			xml.attribute("paste", true);
 			xml.node("vfs", [&] () {
 				gen_named_node(xml, "rom", "Vera.ttf");
 				gen_named_node(xml, "rom", "VeraMono.ttf");
@@ -928,9 +985,11 @@ void Sculpt::Main::_handle_nitpicker_mode()
 			xml.node("default-policy", [&] () { xml.attribute("root", "/fonts"); });
 
 			auto gen_color = [&] (unsigned index, Color color) {
-				xml.node("color", [&] () {
-					xml.attribute("index", index);
-					xml.attribute("bg", String<16>(color));
+				xml.node("palette", [&] () {
+					xml.node("color", [&] () {
+						xml.attribute("index", index);
+						xml.attribute("value", String<16>(color));
+					});
 				});
 			};
 
@@ -1140,6 +1199,30 @@ void Sculpt::Main::_handle_runtime_state()
 		}
 	}
 
+	/* schedule pending file operations to new fs_tool instance */
+	{
+		Child_exit_state exit_state(state, "fs_tool");
+
+		if (exit_state.exited) {
+
+			Child_exit_state::Version const expected_version(_fs_tool_version.value);
+
+			if (exit_state.version == expected_version) {
+
+				_file_operation_queue.schedule_next_operations();
+				_fs_tool_version.value++;
+				reconfigure_runtime = true;
+
+				/*
+				 * The removal of an index file may have completed, re-query index
+				 * files to reflect this change at the depot selection menu.
+				 */
+				if (_popup_dialog.interested_in_file_operations())
+					trigger_depot_query();
+			}
+		}
+	}
+
 	/* upgrade RAM and cap quota on demand */
 	state.for_each_sub_node("child", [&] (Xml_node child) {
 
@@ -1189,6 +1272,7 @@ void Sculpt::Main::_generate_runtime_config(Xml_generator &xml) const
 		gen_parent_service<Pd_session>(xml);
 		gen_parent_service<Rm_session>(xml);
 		gen_parent_service<Log_session>(xml);
+		gen_parent_service<Vm_session>(xml);
 		gen_parent_service<Timer::Session>(xml);
 		gen_parent_service<Report::Session>(xml);
 		gen_parent_service<Platform::Session>(xml);
@@ -1236,6 +1320,13 @@ void Sculpt::Main::_generate_runtime_config(Xml_generator &xml) const
 
 		chroot("depot", "/depot",  READ_ONLY);
 	}
+
+	/* execute file operations */
+	if (_storage._sculpt_partition.valid())
+		if (_file_operation_queue.any_operation_in_progress())
+			xml.node("start", [&] () {
+				gen_fs_tool_start_content(xml, _fs_tool_version,
+				                          _file_operation_queue); });
 
 	_network.gen_runtime_start_nodes(xml);
 

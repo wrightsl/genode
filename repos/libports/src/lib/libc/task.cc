@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2016-2018 Genode Labs GmbH
+ * Copyright (C) 2016-2019 Genode Labs GmbH
  *
  * This file is part of the Genode OS framework, which is distributed
  * under the terms of the GNU Affero General Public License version 3.
@@ -20,8 +20,7 @@
 #include <base/rpc_client.h>
 #include <base/heap.h>
 #include <base/attached_rom_dataspace.h>
-#include <vfs/file_system_factory.h>
-#include <vfs/dir_file_system.h>
+#include <vfs/simple_env.h>
 #include <timer_session/connection.h>
 
 /* libc includes */
@@ -40,58 +39,15 @@ extern char **environ;
 
 namespace Libc {
 	class Env_implementation;
-	class Vfs_env;
 	class Kernel;
 	class Pthreads;
 	class Timer;
 	class Timer_accessor;
 	class Timeout;
 	class Timeout_handler;
-	class Io_response_handler;
 
 	using Genode::Microseconds;
 }
-
-
-class Libc::Vfs_env : public Vfs::Env
-{
-	private:
-
-		Genode::Env       &_env;
-		Genode::Allocator &_alloc;
-
-		Vfs::Io_response_handler &_io_handler;
-
-		struct Watch_response_stub : Vfs::Watch_response_handler {
-			void handle_watch_response(Vfs::Vfs_watch_handle::Context*) override { };
-		} _watch_stub { };
-
-		Vfs::Global_file_system_factory _global_file_system_factory { _alloc };
-
-		Vfs::Dir_file_system _root_dir;
-
-	public:
-
-		Vfs_env(Genode::Env &env,
-		        Genode::Allocator &alloc,
-		        Genode::Xml_node config,
-		        Vfs::Io_response_handler &io_handler)
-		: _env(env), _alloc(alloc), _io_handler(io_handler),
-		  _root_dir(*this, config, _global_file_system_factory)
-		{ }
-
-		Genode::Env &env() override { return _env; }
-
-		Genode::Allocator &alloc() override { return _alloc; }
-
-		Vfs::File_system &root_dir() override { return _root_dir; }
-
-		Vfs::Io_response_handler &io_handler() override {
-			return _io_handler; }
-
-		Vfs::Watch_response_handler &watch_handler() override {
-			return _watch_stub; }
-};
 
 
 class Libc::Env_implementation : public Libc::Env
@@ -126,20 +82,15 @@ class Libc::Env_implementation : public Libc::Env
 			return Genode::Xml_node("<libc/>");
 		}
 
-		Vfs::Global_file_system_factory _file_system_factory;
-		Vfs_env _vfs_env;
+		Vfs::Simple_env _vfs_env;
 
 		Genode::Xml_node _config_xml() const override {
 			return _config.xml(); };
 
 	public:
 
-		Env_implementation(Genode::Env &env, Genode::Allocator &alloc,
-		                   Vfs::Io_response_handler &io_response_handler)
-		:
-			_env(env), _file_system_factory(alloc),
-			_vfs_env(_env, alloc, _vfs_config(), io_response_handler)
-		{ }
+		Env_implementation(Genode::Env &env, Genode::Allocator &alloc)
+		: _env(env), _vfs_env(_env, alloc, _vfs_config()) { }
 
 
 		/*************************
@@ -207,12 +158,12 @@ struct Libc::Timer
 		return _timer.curr_time();
 	}
 
-	static Microseconds microseconds(unsigned long timeout_ms)
+	static Microseconds microseconds(Genode::uint64_t timeout_ms)
 	{
 		return Microseconds(1000*timeout_ms);
 	}
 
-	static unsigned long max_timeout()
+	static Genode::uint64_t max_timeout()
 	{
 		return ~0UL/1000;
 	}
@@ -247,8 +198,8 @@ struct Libc::Timeout
 	Timeout_handler                    &_handler;
 	::Timer::One_shot_timeout<Timeout>  _timeout;
 
-	bool          _expired             = true;
-	unsigned long _absolute_timeout_ms = 0;
+	bool             _expired             = true;
+	Genode::uint64_t _absolute_timeout_ms = 0;
 
 	void _handle(Duration now)
 	{
@@ -264,7 +215,7 @@ struct Libc::Timeout
 		_timeout(_timer_accessor.timer()._timer, *this, &Timeout::_handle)
 	{ }
 
-	void start(unsigned long timeout_ms)
+	void start(Genode::uint64_t timeout_ms)
 	{
 		Milliseconds const now = _timer_accessor.timer().curr_time().trunc_to_plain_ms();
 
@@ -274,7 +225,7 @@ struct Libc::Timeout
 		_timeout.schedule(_timer_accessor.timer().microseconds(timeout_ms));
 	}
 
-	unsigned long duration_left() const
+	Genode::uint64_t duration_left() const
 	{
 		Milliseconds const now = _timer_accessor.timer().curr_time().trunc_to_plain_ms();
 
@@ -302,7 +253,7 @@ struct Libc::Pthreads
 				_timeout.construct(_timer_accessor, *this);
 		}
 
-		Pthread(Timer_accessor &timer_accessor, unsigned long timeout_ms)
+		Pthread(Timer_accessor &timer_accessor, Genode::uint64_t timeout_ms)
 		: _timer_accessor(timer_accessor)
 		{
 			if (timeout_ms > 0) {
@@ -311,7 +262,7 @@ struct Libc::Pthreads
 			}
 		}
 
-		unsigned long duration_left()
+		Genode::uint64_t duration_left()
 		{
 			_construct_timeout_once();
 			return _timeout->duration_left();
@@ -339,7 +290,7 @@ struct Libc::Pthreads
 			p->lock.unlock();
 	}
 
-	unsigned long suspend_myself(Suspend_functor & check, unsigned long timeout_ms)
+	Genode::uint64_t suspend_myself(Suspend_functor & check, Genode::uint64_t timeout_ms)
 	{
 		Pthread myself { timer_accessor, timeout_ms };
 		{
@@ -371,19 +322,6 @@ struct Libc::Pthreads
 
 extern void (*libc_select_notify)();
 
-struct Libc::Io_response_handler : Vfs::Io_response_handler
-{
-	void handle_io_response(Vfs::Vfs_handle::Context *) override
-	{
-		/* some contexts may have been deblocked from select() */
-		if (libc_select_notify)
-			libc_select_notify();
-
-		/* resume all as any context may have been deblocked from blocking I/O */
-		Libc::resume_all();
-	}
-};
-
 
 /* internal utility */
 static void resumed_callback();
@@ -400,15 +338,16 @@ static void suspended_callback();
  * secondary stack for the application task. Context switching uses
  * setjmp/longjmp.
  */
-struct Libc::Kernel
+struct Libc::Kernel final : Vfs::Io_response_handler,
+                            Genode::Entrypoint::Io_progress_handler
 {
 	private:
 
 		Genode::Env         &_env;
 		Genode::Allocator   &_heap;
-		Io_response_handler  _io_response_handler;
-		Env_implementation   _libc_env { _env, _heap, _io_response_handler };
-		Vfs_plugin           _vfs { _libc_env, _heap };
+
+		Env_implementation   _libc_env { _env, _heap };
+		Vfs_plugin           _vfs { _libc_env, _heap, *this };
 
 		Genode::Reconstructible<Genode::Io_signal_handler<Kernel>> _resume_main_handler {
 			_env.ep(), *this, &Kernel::_resume_main };
@@ -417,6 +356,9 @@ struct Libc::Kernel
 		jmp_buf _user_context;
 		bool    _valid_user_context          = false;
 		bool    _dispatch_pending_io_signals = false;
+
+		/* io_progress_handler marker */
+		bool _io_ready { false };
 
 		Genode::Thread &_myself { *Genode::Thread::myself() };
 
@@ -488,13 +430,13 @@ struct Libc::Kernel
 			: _timer_accessor(timer_accessor), _kernel(kernel)
 			{ }
 
-			void timeout(unsigned long timeout_ms)
+			void timeout(Genode::uint64_t timeout_ms)
 			{
 				_construct_timeout_once();
 				_timeout->start(timeout_ms);
 			}
 
-			unsigned long duration_left()
+			Genode::uint64_t duration_left()
 			{
 				_construct_timeout_once();
 				return _timeout->duration_left();
@@ -571,8 +513,8 @@ struct Libc::Kernel
 			_longjmp(_user_context, 1);
 		}
 
-		unsigned long _suspend_main(Suspend_functor &check,
-		                            unsigned long timeout_ms)
+		Genode::uint64_t _suspend_main(Suspend_functor &check,
+		                               Genode::uint64_t timeout_ms)
 		{
 			/* check that we're not running on libc kernel context */
 			if (Thread::mystack().top == _kernel_stack) {
@@ -619,7 +561,10 @@ struct Libc::Kernel
 	public:
 
 		Kernel(Genode::Env &env, Genode::Allocator &heap)
-		: _env(env), _heap(heap) { }
+		: _env(env), _heap(heap)
+		{
+			_env.ep().register_io_progress_handler(*this);
+		}
 
 		~Kernel() { Genode::error(__PRETTY_FUNCTION__, " should not be executed!"); }
 
@@ -706,7 +651,7 @@ struct Libc::Kernel
 		/**
 		 * Suspend this context (main or pthread)
 		 */
-		unsigned long suspend(Suspend_functor &check, unsigned long timeout_ms)
+		Genode::uint64_t suspend(Suspend_functor &check, Genode::uint64_t timeout_ms)
 		{
 			if (timeout_ms > 0
 			 && timeout_ms > _timer_accessor.timer().max_timeout()) {
@@ -821,6 +766,44 @@ struct Libc::Kernel
 				_switch_to_user();
 			}
 		}
+
+
+		/****************************************
+		 ** Vfs::Io_response_handler interface **
+		 ****************************************/
+
+		void read_ready_response() override {
+			_io_ready = true; }
+
+		void io_progress_response() override {
+			_io_ready = true; }
+
+
+		/**********************************************
+		 * Entrypoint::Io_progress_handler interface **
+		 **********************************************/
+
+		void handle_io_progress() override
+		{
+			/*
+			 * TODO: make VFS I/O completion checks during
+			 * kernel time to avoid flapping between stacks
+			 */
+
+			if (_io_ready) {
+				_io_ready = false;
+
+				/* some contexts may have been deblocked from select() */
+				if (libc_select_notify)
+					libc_select_notify();
+
+				/*
+				 * resume all as any VFS context may have
+				 * been deblocked from blocking I/O
+				 */
+				Kernel::resume_all();
+			}
+		}
 };
 
 
@@ -858,7 +841,7 @@ static void resumed_callback() { kernel->entrypoint_resumed(); }
 void Libc::resume_all() { kernel->resume_all(); }
 
 
-unsigned long Libc::suspend(Suspend_functor &s, unsigned long timeout_ms)
+Genode::uint64_t Libc::suspend(Suspend_functor &s, Genode::uint64_t timeout_ms)
 {
 	if (!kernel) {
 		error("libc kernel not initialized, needed for suspend()");

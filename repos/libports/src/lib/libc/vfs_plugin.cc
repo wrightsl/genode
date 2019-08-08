@@ -131,6 +131,13 @@ namespace Libc {
 		return rtc.string();
 	}
 
+	char const *config_rng() __attribute__((weak));
+	char const *config_rng()
+	{
+		static Config_attr rng("rng", "");
+		return rng.string();
+	}
+
 	char const *config_socket() __attribute__((weak));
 	char const *config_socket()
 	{
@@ -222,10 +229,12 @@ Libc::File_descriptor *Libc::Vfs_plugin::open(char const *path, int flags,
 		/* FIXME error cleanup code leaks resources! */
 
 		if (!fd) {
+			VFS_THREAD_SAFE(handle->close());
 			errno = EMFILE;
 			return nullptr;
 		}
 
+		handle->handler(&_response_handler);
 		fd->flags = flags & O_ACCMODE;
 
 		return fd;
@@ -240,7 +249,7 @@ Libc::File_descriptor *Libc::Vfs_plugin::open(char const *path, int flags,
 
 	Vfs::Vfs_handle *handle = 0;
 
-	while (handle == 0) {
+	while (handle == nullptr) {
 
 		switch (VFS_THREAD_SAFE(_root_dir.open(path, flags, &handle, _alloc))) {
 
@@ -301,13 +310,16 @@ Libc::File_descriptor *Libc::Vfs_plugin::open(char const *path, int flags,
 	/* FIXME error cleanup code leaks resources! */
 
 	if (!fd) {
+		VFS_THREAD_SAFE(handle->close());
 		errno = EMFILE;
 		return nullptr;
 	}
 
+	handle->handler(&_response_handler);
 	fd->flags = flags & (O_ACCMODE|O_NONBLOCK|O_APPEND);
 
 	if ((flags & O_TRUNC) && (ftruncate(fd, 0) == -1)) {
+		VFS_THREAD_SAFE(handle->close());
 		errno = EINVAL; /* XXX which error code fits best ? */
 		return nullptr;
 	}
@@ -316,10 +328,79 @@ Libc::File_descriptor *Libc::Vfs_plugin::open(char const *path, int flags,
 }
 
 
+int Libc::Vfs_plugin::_vfs_sync(Vfs::Vfs_handle &vfs_handle)
+{
+	typedef Vfs::File_io_service::Sync_result Result;
+	Result result = Result::SYNC_QUEUED;
+
+	{
+		struct Check : Libc::Suspend_functor
+		{
+			bool retry { false };
+
+			Vfs::Vfs_handle &vfs_handle;
+
+			Check(Vfs::Vfs_handle &vfs_handle)
+			: vfs_handle(vfs_handle) { }
+
+			bool suspend() override
+			{
+				retry = !VFS_THREAD_SAFE(vfs_handle.fs().queue_sync(&vfs_handle));
+				return retry;
+			}
+		} check(vfs_handle);
+
+		/*
+		 * Cannot call Libc::suspend() immediately, because the Libc kernel
+		 * might not be running yet.
+		 */
+		if (!VFS_THREAD_SAFE(vfs_handle.fs().queue_sync(&vfs_handle))) {
+			do {
+				Libc::suspend(check);
+			} while (check.retry);
+		}
+	}
+
+	{
+		struct Check : Libc::Suspend_functor
+		{
+			bool retry { false };
+
+			Vfs::Vfs_handle &vfs_handle;
+			Result          &result;
+
+			Check(Vfs::Vfs_handle &vfs_handle, Result &result)
+			: vfs_handle(vfs_handle), result(result) { }
+
+			bool suspend() override
+			{
+				result = VFS_THREAD_SAFE(vfs_handle.fs().complete_sync(&vfs_handle));
+				retry = result == Vfs::File_io_service::SYNC_QUEUED;
+				return retry;
+			}
+		} check(vfs_handle, result);
+
+		/*
+		 * Cannot call Libc::suspend() immediately, because the Libc kernel
+		 * might not be running yet.
+		 */
+		result = VFS_THREAD_SAFE(vfs_handle.fs().complete_sync(&vfs_handle));
+		if (result == Result::SYNC_QUEUED) {
+			do {
+				Libc::suspend(check);
+			} while (check.retry);
+		}
+	}
+
+	return result == Result::SYNC_OK ? 0 : Libc::Errno(EIO);
+}
+
+
 int Libc::Vfs_plugin::close(Libc::File_descriptor *fd)
 {
 	Vfs::Vfs_handle *handle = vfs_handle(fd);
-	_vfs_sync(handle);
+	/* XXX: mark the handle as requiring sync or not */
+	_vfs_sync(*handle);
 	VFS_THREAD_SAFE(handle->close());
 	Libc::file_descriptor_allocator()->free(fd);
 	return 0;
@@ -337,7 +418,7 @@ int Libc::Vfs_plugin::dup2(Libc::File_descriptor *fd,
 int Libc::Vfs_plugin::fstat(Libc::File_descriptor *fd, struct stat *buf)
 {
 	Vfs::Vfs_handle *handle = vfs_handle(fd);
-	_vfs_sync(handle);
+	_vfs_sync(*handle);
 	return stat(fd->fd_path, buf);
 }
 
@@ -711,8 +792,15 @@ int Libc::Vfs_plugin::ioctl(Libc::File_descriptor *fd, int request, char *argp)
 	switch (request) {
 
 	case TIOCGWINSZ:
-		opcode = Opcode::IOCTL_OP_TIOCGWINSZ;
-		break;
+		{
+			if (!argp) {
+				errno = EINVAL;
+				return -1;
+			}
+
+			opcode = Opcode::IOCTL_OP_TIOCGWINSZ;
+			break;
+		}
 
 	case TIOCGETA:
 		{
@@ -811,7 +899,7 @@ int Libc::Vfs_plugin::ioctl(Libc::File_descriptor *fd, int request, char *argp)
 
 	case TIOCGWINSZ:
 		{
-			::winsize *winsize = (::winsize *)arg;
+			::winsize *winsize = (::winsize *)argp;
 			winsize->ws_row = out.tiocgwinsz.rows;
 			winsize->ws_col = out.tiocgwinsz.columns;
 			return 0;
@@ -864,7 +952,7 @@ int Libc::Vfs_plugin::ioctl(Libc::File_descriptor *fd, int request, char *argp)
 int Libc::Vfs_plugin::ftruncate(Libc::File_descriptor *fd, ::off_t length)
 {
 	Vfs::Vfs_handle *handle = vfs_handle(fd);
-	_vfs_sync(handle);
+	_vfs_sync(*handle);
 
 	typedef Vfs::File_io_service::Ftruncate_result Result;
 
@@ -881,6 +969,7 @@ int Libc::Vfs_plugin::ftruncate(Libc::File_descriptor *fd, ::off_t length)
 int Libc::Vfs_plugin::fcntl(Libc::File_descriptor *fd, int cmd, long arg)
 {
 	switch (cmd) {
+	case F_DUPFD_CLOEXEC:
 	case F_DUPFD:
 		{
 			/*
@@ -921,7 +1010,7 @@ int Libc::Vfs_plugin::fcntl(Libc::File_descriptor *fd, int cmd, long arg)
 int Libc::Vfs_plugin::fsync(Libc::File_descriptor *fd)
 {
 	Vfs::Vfs_handle *handle = vfs_handle(fd);
-	return _vfs_sync(handle);
+	return _vfs_sync(*handle);
 }
 
 
@@ -955,6 +1044,8 @@ int Libc::Vfs_plugin::symlink(const char *oldpath, const char *newpath)
 
 	Vfs::file_size count = ::strlen(oldpath) + 1;
 	Vfs::file_size out_count  = 0;
+
+	handle->handler(&_response_handler);
 
 	struct Check : Libc::Suspend_functor
 	{
@@ -991,7 +1082,7 @@ int Libc::Vfs_plugin::symlink(const char *oldpath, const char *newpath)
 	/* wake up threads blocking for 'queue_*()' or 'write()' */
 	Libc::resume_all();
 
-	_vfs_sync(handle);
+	_vfs_sync(*handle);
 	VFS_THREAD_SAFE(handle->close());
 
 	if (out_count != count)
@@ -1023,6 +1114,8 @@ ssize_t Libc::Vfs_plugin::readlink(const char *path, char *buf, ::size_t buf_siz
 	case Vfs::Directory_service::OPENLINK_ERR_PERMISSION_DENIED:
 		return Errno(EACCES);
 	}
+
+	symlink_handle->handler(&_response_handler);
 
 	{
 		struct Check : Libc::Suspend_functor
@@ -1215,6 +1308,40 @@ int Libc::Vfs_plugin::munmap(void *addr, ::size_t)
 {
 	Libc::mem_alloc()->free(addr);
 	return 0;
+}
+
+
+bool Libc::Vfs_plugin::poll(File_descriptor &fd, struct pollfd &pfd)
+{
+	if (fd.plugin != this) return false;
+
+	Vfs::Vfs_handle *handle = vfs_handle(&fd);
+	if (!handle) {
+		pfd.revents |= POLLNVAL;
+		return true;
+	}
+
+	enum {
+		POLLIN_MASK = POLLIN | POLLRDNORM | POLLRDBAND | POLLPRI,
+		POLLOUT_MASK = POLLOUT | POLLWRNORM | POLLWRBAND,
+	};
+
+	bool res { false };
+
+	if ((pfd.events & POLLIN_MASK)
+	 && VFS_THREAD_SAFE(handle->fs().read_ready(handle)))
+	{
+		pfd.revents |= pfd.events & POLLIN_MASK;
+		res = true;
+	}
+
+	if ((pfd.events & POLLOUT_MASK) /* XXX always writeable */)
+	{
+		pfd.revents |= pfd.events & POLLOUT_MASK;
+		res = true;
+	}
+
+	return res;
 }
 
 

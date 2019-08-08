@@ -43,7 +43,18 @@ struct Menu_view::Main
 
 	Nitpicker::Session::View_handle _view_handle = _nitpicker.create_view();
 
+	/**
+	 * Dialog position in screen coordinate space
+	 */
 	Point _position { };
+
+	/**
+	 * Last pointer position at the time of the most recent hovering report,
+	 * in screen coordinate space.
+	 */
+	Point _hovered_position { };
+
+	bool _dialog_hovered = false;
 
 	Area _configured_size { };
 	Area _visible_size { };
@@ -85,7 +96,7 @@ struct Menu_view::Main
 
 	Heap _heap { _env.ram(), _env.rm() };
 
-	struct Vfs_env : Vfs::Env, Vfs::Io_response_handler, Vfs::Watch_response_handler
+	struct Vfs_env : Vfs::Env
 	{
 		Genode::Env      &_env;
 		Allocator        &_alloc;
@@ -94,14 +105,9 @@ struct Menu_view::Main
 		Vfs_env(Genode::Env &env, Allocator &alloc, Vfs::File_system &vfs)
 		: _env(env), _alloc(alloc), _vfs(vfs) { }
 
-		void handle_io_response   (Vfs::Vfs_handle::Context      *) override { }
-		void handle_watch_response(Vfs::Vfs_watch_handle::Context*) override { }
-
 		Genode::Env            &env()           override { return _env;   }
 		Allocator              &alloc()         override { return _alloc; }
 		Vfs::File_system       &root_dir()      override { return _vfs;   }
-		Io_response_handler    &io_handler()    override { return *this;  }
-		Watch_response_handler &watch_handler() override { return *this;  }
 
 	} _vfs_env;
 
@@ -120,7 +126,7 @@ struct Menu_view::Main
 
 	Attached_dataspace _input_ds { _env.rm(), _nitpicker.input()->dataspace() };
 
-	Widget::Unique_id _hovered { };
+	Widget::Unique_id _last_reported_hovered { };
 
 	void _handle_config();
 
@@ -139,9 +145,9 @@ struct Menu_view::Main
 	{
 		enum { PERIOD = 10 };
 
-		unsigned curr_frame() const { return elapsed_ms() / PERIOD; }
+		Genode::uint64_t curr_frame() const { return elapsed_ms() / PERIOD; }
 
-		void schedule() { trigger_once(Frame_timer::PERIOD*1000); }
+		void schedule() { trigger_once((Genode::uint64_t)Frame_timer::PERIOD*1000); }
 
 		Frame_timer(Env &env) : Timer::Connection(env) { }
 
@@ -154,12 +160,14 @@ struct Menu_view::Main
 
 	Genode::Reporter _hover_reporter = { _env, "hover" };
 
+	void _update_hover_report();
+
 	bool _schedule_redraw = false;
 
 	/**
 	 * Frame of last call of 'handle_frame_timer'
 	 */
-	unsigned _last_frame = 0;
+	Genode::uint64_t _last_frame = 0;
 
 	/**
 	 * Number of frames between two redraws
@@ -190,6 +198,28 @@ struct Menu_view::Main
 };
 
 
+void Menu_view::Main::_update_hover_report()
+{
+	if (!_hover_reporter.enabled())
+		return;
+
+	if (!_dialog_hovered) {
+		Genode::Reporter::Xml_generator xml(_hover_reporter, [&] () { });
+		return;
+	}
+
+	Widget::Unique_id const new_hovered = _root_widget.hovered(_hovered_position);
+
+	if (_last_reported_hovered != new_hovered) {
+
+		Genode::Reporter::Xml_generator xml(_hover_reporter, [&] () {
+			_root_widget.gen_hover_model(xml, _hovered_position); });
+
+		_last_reported_hovered = new_hovered;
+	}
+}
+
+
 void Menu_view::Main::_handle_dialog_update()
 {
 	try {
@@ -204,11 +234,14 @@ void Menu_view::Main::_handle_dialog_update()
 	_dialog_rom.update();
 
 	Xml_node dialog = _dialog_rom.xml();
+
 	if (dialog.has_type("empty"))
 		return;
 
 	_root_widget.update(dialog);
 	_root_widget.size(_root_widget_size());
+
+	_update_hover_report();
 
 	_schedule_redraw = true;
 
@@ -217,7 +250,7 @@ void Menu_view::Main::_handle_dialog_update()
 	 * processing immediately. This way, we avoid latencies when the dialog
 	 * model is updated sporadically.
 	 */
-	unsigned const curr_frame = _timer.curr_frame();
+	Genode::uint64_t const curr_frame = _timer.curr_frame();
 	if (curr_frame != _last_frame) {
 
 		if (curr_frame - _last_frame > 10)
@@ -247,35 +280,29 @@ void Menu_view::Main::_handle_config()
 
 void Menu_view::Main::_handle_input()
 {
+	Point const orig_hovered_position = _hovered_position;
+	bool  const orig_dialog_hovered   = _dialog_hovered;
+
 	_nitpicker.input()->for_each_event([&] (Input::Event const &ev) {
 		ev.handle_absolute_motion([&] (int x, int y) {
-
-			Point const at = Point(x, y) - _position;
-			Widget::Unique_id const new_hovered = _root_widget.hovered(at);
-
-			if (_hovered != new_hovered) {
-
-				if (_hover_reporter.enabled()) {
-					Genode::Reporter::Xml_generator xml(_hover_reporter, [&] () {
-						_root_widget.gen_hover_model(xml, at);
-					});
-				}
-
-				_hovered = new_hovered;
-			}
+			_dialog_hovered   = true;
+			_hovered_position = Point(x, y) - _position;
 		});
 
 		/*
 		 * Reset hover model when losing the focus
 		 */
-		if (ev.focus_leave() || ev.hover_leave()) {
-			_hovered = Widget::Unique_id();
-
-			if (_hover_reporter.enabled()) {
-				Genode::Reporter::Xml_generator xml(_hover_reporter, [&] () { });
-			}
+		if (ev.hover_leave()) {
+			_dialog_hovered   = false;
+			_hovered_position = Point();
 		}
 	});
+
+	bool const hover_changed = orig_dialog_hovered   != _dialog_hovered
+	                        || orig_hovered_position != _hovered_position;
+
+	if (hover_changed)
+		_update_hover_report();
 }
 
 
@@ -283,15 +310,15 @@ void Menu_view::Main::_handle_frame_timer()
 {
 	_frame_cnt++;
 
-	unsigned const curr_frame = _timer.curr_frame();
+	Genode::uint64_t const curr_frame = _timer.curr_frame();
 
 	if (_animator.active()) {
 
-		unsigned const passed_frames = max(curr_frame - _last_frame, 4U);
+		Genode::uint64_t const passed_frames = max(curr_frame - _last_frame, 4U);
 
 		if (passed_frames > 0) {
 
-			for (unsigned i = 0; i < passed_frames; i++)
+			for (Genode::uint64_t i = 0; i < passed_frames; i++)
 				_animator.animate();
 
 			_schedule_redraw = true;
@@ -319,7 +346,6 @@ void Menu_view::Main::_handle_frame_timer()
 		else
 			_buffer->reset_surface();
 
-		_root_widget.size(size);
 		_root_widget.position(Point(0, 0));
 
 		// XXX restrict redraw to dirty regions

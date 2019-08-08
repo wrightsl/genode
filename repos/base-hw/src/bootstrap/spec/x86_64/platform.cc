@@ -69,6 +69,7 @@ Bootstrap::Platform::Board::Board()
             Memory_region { __initial_bx & ~0xFFFUL,
                             get_page_size() })
 {
+	Hw::Acpi_rsdp & acpi_rsdp = info.acpi_rsdp;
 	static constexpr size_t initial_map_max = 1024 * 1024 * 1024;
 
 	auto lambda = [&] (addr_t base, addr_t size) {
@@ -117,7 +118,7 @@ Bootstrap::Platform::Board::Board()
 				acpi_rsdp = rsdp;
 		},
 		[&] (Hw::Framebuffer const &fb) {
-			framebuffer = fb;
+			info.framebuffer = fb;
 		});
 	} else if (__initial_ax == Multiboot_info::MAGIC) {
 		for (unsigned i = 0; true; i++) {
@@ -174,7 +175,10 @@ Bootstrap::Platform::Board::Board()
 					Hw::for_each_apic_struct(*table,[&](Hw::Apic_madt const *e){
 						if (e->type == Hw::Apic_madt::LAPIC) {
 							Hw::Apic_madt::Lapic lapic(e);
-							cpus ++;
+
+							/* check if APIC is enabled in hardware */
+							if (lapic.valid())
+								cpus ++;
 						}
 					});
 				});
@@ -189,7 +193,10 @@ Bootstrap::Platform::Board::Board()
 					Hw::for_each_apic_struct(*table,[&](Hw::Apic_madt const *e){
 						if (e->type == Hw::Apic_madt::LAPIC) {
 							Hw::Apic_madt::Lapic lapic(e);
-							cpus ++;
+
+							/* check if APIC is enabled in hardware */
+							if (lapic.valid())
+								cpus ++;
 						}
 					});
 				});

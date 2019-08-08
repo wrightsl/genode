@@ -19,6 +19,7 @@
 #include <base/session_object.h>
 #include <vm_session/vm_session.h>
 #include <dataspace/capability.h>
+#include <trace/source_registry.h>
 
 /* Core includes */
 #include <object.h>
@@ -67,7 +68,8 @@ class Genode::Vm_session_component
 		using Rpc_object<Vm_session, Vm_session_component>::cap;
 
 		Vm_session_component(Rpc_entrypoint &, Resources, Label const &,
-		                     Diag, Ram_allocator &ram, Region_map &);
+		                     Diag, Ram_allocator &ram, Region_map &,
+		                     unsigned priority, Trace::Source_registry &);
 		~Vm_session_component();
 
 		/**************************
@@ -79,7 +81,7 @@ class Genode::Vm_session_component
 		void _run(Vcpu_id);
 		void _pause(Vcpu_id);
 
-		void attach(Dataspace_capability, addr_t /* vm_addr */) override {
+		void attach(Dataspace_capability, addr_t, Attach_attr) override {
 			warning("Not implemented for TrustZone case"); }
 
 		void attach_pic(addr_t /* vm_addr */) override {

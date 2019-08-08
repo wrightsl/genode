@@ -19,11 +19,13 @@
 #include <base/rpc_server.h>
 #include <vm_session/vm_session.h>
 #include <dataspace/capability.h>
+#include <trace/source_registry.h>
 
 /* Core includes */
 #include <dataspace_component.h>
 #include <object.h>
 #include <kernel/vm.h>
+#include <kernel/vm_state.h>
 
 namespace Genode {
 	class Vm_session_component;
@@ -43,7 +45,9 @@ class Genode::Vm_session_component
 	public:
 
 		Vm_session_component(Rpc_entrypoint &, Resources resources,
-		                     Label const &, Diag, Ram_allocator &, Region_map &)
+		                     Label const &, Diag, Ram_allocator &,
+		                     Region_map &, unsigned,
+		                     Trace::Source_registry &)
 		:
 			Ram_quota_guard(resources.ram_quota),
 			Cap_quota_guard(resources.cap_quota),
@@ -81,7 +85,7 @@ class Genode::Vm_session_component
 				Kernel::pause_vm(kernel_object());
 		}
 
-		void attach(Dataspace_capability, addr_t) override { }
+		void attach(Dataspace_capability, addr_t, Attach_attr) override { }
 		void attach_pic(addr_t)                   override { }
 		void detach(addr_t, size_t)               override { }
 		void _create_vcpu(Thread_capability) { }

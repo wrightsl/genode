@@ -354,8 +354,8 @@ static void test_decoded_content(Env        &env,
 	 * Test Xml_node::decoded_content<String<N> >
 	 */
 
-	enum { MAX_OUT_STRING_SZ = 256 };
-	using Out_string = String<min(max_content_sz + 1, (size_t)MAX_OUT_STRING_SZ)>;
+	enum { MAX_OUT_STRING_CONTENT_SZ = 255 };
+	using Out_string = String<min(max_content_sz, (size_t)MAX_OUT_STRING_CONTENT_SZ) + 1>;
 	Out_string str = xml.decoded_content<Out_string>();
 
 	if (memcmp(str.string(), buf2, min(str.size(), buf_sz))) {
@@ -411,6 +411,13 @@ void Component::construct(Genode::Env &env)
 	test_decoded_content<11  >(env, 3, xml_test_comments, 8, 119);
 	test_decoded_content<1   >(env, 4, xml_test_comments, 8, 119);
 	test_decoded_content<0   >(env, 5, xml_test_comments, 8, 119);
+	log("");
+
+	log("-- Test iterating over invalid node --");
+	{
+		/* this must not raise a 'Nonexistent_sub_node' exception */
+		Xml_node("<a><b></c></a>").for_each_sub_node("c", [&] (Xml_node) { });
+	}
 	log("");
 
 	log("--- End of XML-parser test ---");

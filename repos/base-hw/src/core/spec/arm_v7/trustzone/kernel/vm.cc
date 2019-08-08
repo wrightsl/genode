@@ -15,6 +15,7 @@
 /* core includes */
 #include <kernel/cpu.h>
 #include <kernel/vm.h>
+#include <cpu/vm_state_trustzone.h>
 
 using namespace Kernel;
 
@@ -24,7 +25,7 @@ Kernel::Vm::Vm(void                   * const state,
                void                   * const /* table */)
 :
 	Cpu_job(Cpu_priority::MIN, 0),
-	_state((Genode::Vm_state * const)state),
+	_state((Genode::Vm_state *)state),
 	_context(context), _table(0)
 {
 	affinity(cpu_pool().primary_cpu());
@@ -62,7 +63,7 @@ void Vm::proceed(Cpu & cpu)
 	unsigned const irq = _state->irq_injection;
 	if (irq) {
 		if (pic().secure(irq)) {
-			Genode::warning("Refuse to inject secure IRQ into VM");
+			Genode::raw("Refuse to inject secure IRQ into VM");
 		} else {
 			pic().trigger(irq);
 			_state->irq_injection = 0;

@@ -128,10 +128,12 @@ class Kernel::Cpu_scheduler
 		Share *        _head = nullptr;
 		unsigned       _head_quota  = 0;
 		bool           _head_claims = false;
-		bool           _head_yields;
+		bool           _head_yields = false;
 		unsigned const _quota;
 		unsigned       _residual;
 		unsigned const _fill;
+		bool           _need_to_schedule { true };
+		time_t         _last_time { 0 };
 
 		template <typename F> void _for_each_prio(F f) {
 			for (signed p = Prio::MAX; p > Prio::MIN - 1; p--) { f(p); } }
@@ -179,10 +181,13 @@ class Kernel::Cpu_scheduler
 		 */
 		Cpu_scheduler(Share * const i, unsigned const q, unsigned const f);
 
+		bool need_to_schedule() { return _need_to_schedule; }
+		void timeout()          { _need_to_schedule = true; }
+
 		/**
-		 * Update head according to the consumption of quota 'q'
+		 * Update head according to the consumed time
 		 */
-		void update(unsigned q);
+		void update(time_t time);
 
 		/**
 		 * Set 's1' ready and return wether this outdates current head

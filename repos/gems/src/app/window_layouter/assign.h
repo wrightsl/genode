@@ -101,7 +101,7 @@ class Window_layouter::Assign : public List_model<Assign>::Element
 		Rect window_geometry(unsigned win_id, Area client_size, Rect target_geometry,
 		                     Decorator_margins const &decorator_margins) const
 		{
-			if (_maximized || !_pos_defined)
+			if (!_pos_defined)
 				return target_geometry;
 
 			Point const any_pos(150*win_id % 800, 30 + (100*win_id % 500));
@@ -109,12 +109,13 @@ class Window_layouter::Assign : public List_model<Assign>::Element
 			Point const pos(_xpos_any ? any_pos.x() : _pos.x(),
 			                _ypos_any ? any_pos.y() : _pos.y());
 
-			/* floating non-maximized window */
 			Rect const inner(pos, _size_defined ? _size : client_size);
 			Rect const outer = decorator_margins.outer_geometry(inner);
 
 			return Rect(outer.p1() + target_geometry.p1(), outer.area());
 		}
+
+		bool maximized() const { return _maximized; }
 
 		/**
 		 * Call 'fn' with 'Registry<Member>' if label matches assignment
@@ -204,7 +205,28 @@ class Window_layouter::Assign : public List_model<Assign>::Element
 			}
 
 			if (_maximized)
-				xml.attribute("maximized", true);
+				xml.attribute("maximized", "yes");
+		}
+
+		struct Window_state
+		{
+			Rect geometry;
+			bool maximized;
+		};
+
+		void gen_geometry_attr(Xml_generator &xml, Window_state const &window) const
+		{
+			Rect const rect = window.maximized ? Rect(_pos, _size) : window.geometry;
+
+			if (_pos_defined) {
+				xml.attribute("xpos",   rect.x1());
+				xml.attribute("ypos",   rect.y1());
+				xml.attribute("width",  rect.w());
+				xml.attribute("height", rect.h());
+			}
+
+			if (window.maximized)
+				xml.attribute("maximized", "yes");
 		}
 
 		template <typename FN>

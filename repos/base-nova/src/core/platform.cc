@@ -684,6 +684,7 @@ Platform::Platform()
 				                          pages << get_page_size_log2(),
 				                          "platform_info", [&] ()
 				{
+					xml.node("kernel", [&] () { xml.attribute("name", "nova"); });
 					xml.node("acpi", [&] () {
 
 						xml.attribute("revision", 2); /* XXX */
@@ -857,7 +858,7 @@ Platform::Platform()
 				            ", res=", res);
 
 				return { Session_label("kernel"), Trace::Thread_name(name),
-				         Trace::Execution_time(sc_time), affinity };
+				         Trace::Execution_time(sc_time, sc_time), affinity };
 			}
 
 			Trace_source(Trace::Source_registry &registry,
@@ -909,7 +910,7 @@ Platform::Platform()
 			}
 
 			return { Session_label("core"), name,
-			         Trace::Execution_time(sc_time), location };
+			         Trace::Execution_time(sc_time, sc_time), location };
 		}
 
 		Core_trace_source(Trace::Source_registry &registry,
@@ -960,7 +961,7 @@ bool Mapped_mem_allocator::_map_local(addr_t virt_addr, addr_t phys_addr,
                                       unsigned size)
 {
 	/* platform_specific()->core_pd_sel() deadlocks if called from platform constructor */
-	Hip const &hip  = *(Hip const * const)__initial_sp;
+	Hip const &hip  = *(Hip const *)__initial_sp;
 	Genode::addr_t const core_pd_sel = hip.sel_exc;
 
 	map_local(core_pd_sel,

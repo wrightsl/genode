@@ -88,6 +88,8 @@ class Menu_view::Widget : List_model<Widget>::Element
 			return node.attribute_value("name", Name(node.type()));
 		}
 
+		static Animated_rect::Steps motion_steps() { return { 60 }; };
+
 	private:
 
 		Type_name const _type_name;
@@ -155,29 +157,21 @@ class Menu_view::Widget : List_model<Widget>::Element
 		 * Position relative to the parent widget and actual size, defined by
 		 * the parent
 		 */
-		Rect _geometry { };
+		Rect _geometry { Point(0, 0), Area(0, 0) };
 
 		Animated_rect _animated_geometry { _factory.animator };
 
 		void _trigger_geometry_animation()
 		{
-			if (_animated_geometry.animated())
-				return;
-
-			if (_geometry.p1() != _animated_geometry.p1()
-			 || _geometry.p2() != _animated_geometry.p2())
-				_animated_geometry.move_to(_geometry, Animated_rect::Steps{60});
+			bool const changed = (_geometry.p1() != _animated_geometry.p1()
+			                   || _geometry.p2() != _animated_geometry.p2());
+			if (changed)
+				_animated_geometry.move_to(_geometry, motion_steps());
 		}
 
 	public:
 
 		Margin margin { 0, 0, 0, 0 };
-
-		void geometry(Rect geometry)
-		{
-			_geometry = geometry;
-			_trigger_geometry_animation();
-		}
 
 		Rect geometry() const { return _geometry; }
 
@@ -217,6 +211,9 @@ class Menu_view::Widget : List_model<Widget>::Element
 		                  Surface<Pixel_alpha8> &alpha_surface,
 		                  Point at) const = 0;
 
+		/**
+		 * Set widget size and update the widget tree's layout accordingly
+		 */
 		void size(Area size)
 		{
 			_geometry = Rect(_geometry.p1(), size);

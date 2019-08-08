@@ -53,31 +53,25 @@ void Vm_session_component::_attach(addr_t phys_addr, addr_t vm_addr, size_t size
 }
 
 
-void Vm_session_component::attach(Dataspace_capability ds_cap, addr_t vm_addr)
+void Vm_session_component::_attach_vm_memory(Dataspace_component &dsc,
+                                             addr_t const vm_addr,
+                                             Attach_attr const attribute)
 {
-	/* check dataspace validity */
-	_ds_ep->apply(ds_cap, [&] (Dataspace_component *dsc) {
-		if (!dsc) throw Invalid_dataspace();
-
-		/* unsupported - deny otherwise arbitrary physical memory can be mapped to a VM */
-		if (dsc->managed())
-			throw Invalid_dataspace();
-
-		_attach(dsc->phys_addr(), vm_addr, dsc->size());
-	});
+	_attach(dsc.phys_addr() + attribute.offset, vm_addr, attribute.size);
 }
 
 
 void Vm_session_component::attach_pic(addr_t vm_addr)
 {
-	_attach(Board::IRQ_CONTROLLER_VT_CPU_BASE, vm_addr,
-	        Board::IRQ_CONTROLLER_VT_CPU_SIZE);
+	_attach(Board::Cpu_mmio::IRQ_CONTROLLER_VT_CPU_BASE, vm_addr,
+	        Board::Cpu_mmio::IRQ_CONTROLLER_VT_CPU_SIZE);
 }
 
 
-void Vm_session_component::detach(addr_t vm_addr, size_t size) {
-	_table.remove_translation(vm_addr, size, _table_array.alloc()); }
-
+void Vm_session_component::_detach_vm_memory(addr_t vm_addr, size_t size)
+{
+	_table.remove_translation(vm_addr, size, _table_array.alloc());
+}
 
 
 void * Vm_session_component::_alloc_table()
@@ -98,12 +92,15 @@ Vm_session_component::Vm_session_component(Rpc_entrypoint &ds_ep,
                                            Label const &,
                                            Diag,
                                            Ram_allocator &ram_alloc,
-                                           Region_map &region_map)
+                                           Region_map &region_map,
+                                           unsigned,
+                                           Trace::Source_registry &)
 :
 	Ram_quota_guard(resources.ram_quota),
 	Cap_quota_guard(resources.cap_quota),
-	_ds_ep(&ds_ep),
+	_ep(ds_ep),
 	_constrained_md_ram_alloc(ram_alloc, _ram_quota_guard(), _cap_quota_guard()),
+	_sliced_heap(_constrained_md_ram_alloc, region_map),
 	_region_map(region_map),
 	_table(*construct_at<Table>(_alloc_table())),
 	_table_array(*(new (cma()) Array([this] (void * virt) {
@@ -117,11 +114,25 @@ Vm_session_component::Vm_session_component(Rpc_entrypoint &ds_ep,
 		_constrained_md_ram_alloc.free(_ds_cap);
 		throw;
 	}
+
+	/* configure managed VM area */
+	_map.add_range(0, 0UL - 0x1000);
+	_map.add_range(0UL - 0x1000, 0x1000);
 }
 
 
 Vm_session_component::~Vm_session_component()
 {
+	/* detach all regions */
+	while (true) {
+		addr_t out_addr = 0;
+
+		if (!_map.any_block_addr(&out_addr))
+			break;
+
+		detach(out_addr);
+	}
+
 	/* free region in allocator */
 	if (_ds_cap.valid()) {
 		_region_map.detach(_ds_addr);

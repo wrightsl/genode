@@ -21,14 +21,19 @@
 #include <base/env.h>
 
 /* libC includes */
+extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/random.h>
 #include <sys/syscall.h>
-
+#include <sys/limits.h>
+#include <time.h>
+#include <inttypes.h>
+}
 
 int main(int argc, char **argv)
 {
@@ -156,6 +161,47 @@ int main(int argc, char **argv)
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 		printf("sleep/gettime: %.09f\n", ts.tv_sec + ts.tv_nsec / 1000000000.0);
 	}
+
+	{
+		unsigned long long buf = 0;
+		getrandom(&buf, sizeof(buf), 0);
+		printf("getrandom %llx\n", buf);
+	}
+
+	{
+		unsigned long long buf = 0;
+		getentropy(&buf, sizeof(buf));
+		printf("getentropy %llx\n", buf);
+	}
+
+	do {
+		struct tm tm { };
+		/* 2019-05-27 12:30 */
+		tm.tm_sec  = 0;
+		tm.tm_min  = 30;
+		tm.tm_hour = 12;
+		tm.tm_mday = 27;
+		tm.tm_mon  = 4;
+		tm.tm_year = 119;
+
+		time_t t1 = mktime(&tm);
+		if (t1 == (time_t) -1) {
+			++error_count;
+			long long v1 = t1;
+			printf("Check mktime failed: %lld\n", v1);
+			break;
+		}
+		struct tm *tm_gmt = gmtime(&t1);
+		time_t t2 = mktime(tm_gmt);
+		if (t1 != t2) {
+			++error_count;
+			long long v1 = t1, v2 = t2;
+			printf("Check mktime failed: %lld != %lld\n", v1, v2);
+			break;
+		}
+
+		puts("Check mktime: success");
+	} while (0);
 
 	exit(error_count);
 }

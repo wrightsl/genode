@@ -16,6 +16,7 @@
 
 /* Genode includes */
 #include <base/allocator.h>
+#include <base/allocator_avl.h>
 #include <base/session_object.h>
 #include <vm_session/vm_session.h>
 #include <dataspace/capability.h>
@@ -23,8 +24,11 @@
 
 /* Core includes */
 #include <object.h>
+#include <region_map_component.h>
 #include <translation_table.h>
 #include <kernel/vm.h>
+
+#include <trace/source_registry.h>
 
 namespace Genode {
 	class Vm_session_component;
@@ -35,9 +39,12 @@ class Genode::Vm_session_component
 	private Ram_quota_guard,
 	private Cap_quota_guard,
 	public Rpc_object<Vm_session, Vm_session_component>,
+	public Region_map_detach,
 	private Kernel_object<Kernel::Vm>
 {
 	private:
+
+		typedef Allocator_avl_tpl<Rm_region> Avl_region;
 
 		/*
 		 * Noncopyable
@@ -48,8 +55,10 @@ class Genode::Vm_session_component
 		using Table = Hw::Level_1_stage_2_translation_table;
 		using Array = Table::Allocator::Array<Kernel::DEFAULT_TRANSLATION_TABLE_MAX>;
 
-		Rpc_entrypoint            *_ds_ep;
+		Rpc_entrypoint            &_ep;
 		Constrained_ram_allocator  _constrained_md_ram_alloc;
+		Sliced_heap                _sliced_heap;
+		Avl_region                 _map { &_sliced_heap };
 		Region_map                &_region_map;
 		Ram_dataspace_capability   _ds_cap  { };
 		Region_map::Local_addr     _ds_addr { 0 };
@@ -64,6 +73,9 @@ class Genode::Vm_session_component
 		void * _alloc_table();
 		void   _attach(addr_t phys_addr, addr_t vm_addr, size_t size);
 
+		void _attach_vm_memory(Dataspace_component &, addr_t, Attach_attr);
+		void _detach_vm_memory(addr_t, size_t);
+
 	protected:
 
 		Ram_quota_guard &_ram_quota_guard() { return *this; }
@@ -76,9 +88,16 @@ class Genode::Vm_session_component
 		using Rpc_object<Vm_session, Vm_session_component>::cap;
 
 		Vm_session_component(Rpc_entrypoint &, Resources, Label const &,
-		                     Diag, Ram_allocator &ram, Region_map &);
+		                     Diag, Ram_allocator &ram, Region_map &, unsigned,
+		                     Trace::Source_registry &);
 		~Vm_session_component();
 
+		/*********************************
+		 ** Region_map_detach interface **
+		 *********************************/
+
+		void detach(Region_map::Local_addr) override;
+		void unmap_region(addr_t, size_t) override;
 
 		/**************************
 		 ** Vm session interface **
@@ -88,7 +107,7 @@ class Genode::Vm_session_component
 		void _exception_handler(Signal_context_capability, Vcpu_id);
 		void _run(Vcpu_id);
 		void _pause(Vcpu_id);
-		void attach(Dataspace_capability, addr_t) override;
+		void attach(Dataspace_capability, addr_t, Attach_attr) override;
 		void attach_pic(addr_t) override;
 		void detach(addr_t, size_t) override;
 		void _create_vcpu(Thread_capability) {}

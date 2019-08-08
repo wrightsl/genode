@@ -4,6 +4,7 @@
 # \date   2012-04-16
 #
 
+assert_spec x86
 #
 # Build
 #
@@ -45,7 +46,7 @@ set config {
 		<resource name="RAM" quantum="1M"/>
 		<provides> <service name="Timer"/> </provides>
 	</start>
-	<start name="uart_drv">
+	<start name="pc_uart_drv">
 		<resource name="RAM" quantum="1M"/>
 		<provides> <service name="Terminal"/> </provides>
 		<config>
@@ -63,7 +64,7 @@ set config {
 				</config>
 			</target>
 			<preserve name="RAM" quantum="3M"/>
-			<vfs> <dir name="dev"> <log/> </dir> </vfs>
+			<vfs> <dir name="dev"> <log/> <terminal/> </dir> </vfs>
 			<libc stdout="/dev/log" stderr="/dev/log"/>
 		</config>
 	</start>
@@ -84,8 +85,8 @@ proc binary_name_gdbserver_platform_lib_so { } {
 # generic modules
 set boot_modules {
 	core init timer
-	ld.lib.so libc.lib.so vfs.lib.so libc_pipe.lib.so libc_terminal.lib.so
-	uart_drv
+	ld.lib.so libc.lib.so vfs.lib.so libc_pipe.lib.so
+	pc_uart_drv
 	gdb_monitor gdbserver_platform.lib.so test-gdb_monitor_target_config
 }
 

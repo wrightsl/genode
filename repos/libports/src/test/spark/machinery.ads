@@ -2,9 +2,16 @@ package Machinery is
 
    pragma Pure;
 
+   type Object_Size_Type is mod 2**32 with Size => 32;
+
    type Temperature_Type is mod 2**32 with Size => 32;
 
    type Machinery_Type is private;
+
+   function Object_Size (Machinery : Machinery_Type) return Object_Size_Type
+     with Export,
+          Convention    => C,
+          External_Name => "_ZN5Spark11object_sizeERKNS_9MachineryE";
 
    procedure Initialize (Machinery : out Machinery_Type)
      with Export,
@@ -25,6 +32,6 @@ private
 
    type Machinery_Type is record
       Temperature : Temperature_Type;
-   end record with Size => 32;
+   end record;
 
 end Machinery;

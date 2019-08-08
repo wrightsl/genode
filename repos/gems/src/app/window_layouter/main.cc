@@ -23,6 +23,7 @@
 #include <input_session/client.h>
 #include <input/event.h>
 #include <input/keycodes.h>
+#include <timer_session/connection.h>
 
 /* local includes */
 #include <window_list.h>
@@ -44,6 +45,15 @@ struct Window_layouter::Main : Operations,
 
 	Signal_handler<Main> _config_handler {
 		_env.ep(), *this, &Main::_handle_config };
+
+	Timer::Connection _drop_timer { _env };
+
+	enum class Drag_state { IDLE, DRAGGING, SETTLING };
+
+	Drag_state _drag_state { Drag_state::IDLE };
+
+	Signal_handler<Main> _drop_timer_handler {
+		_env.ep(), *this, &Main::_handle_drop_timer };
 
 	Heap _heap { _env.ram(), _env.rm() };
 
@@ -100,13 +110,15 @@ struct Window_layouter::Main : Operations,
 
 				assign.for_each_member([&] (Assign::Member &member) {
 
-					Rect const rect = member.window.maximized()
-					                ? target.geometry()
-					                : assign.window_geometry(member.window.id().value,
+					member.window.floating(assign.floating());
+					member.window.target_geometry(target.geometry());
+
+					Rect const rect = assign.window_geometry(member.window.id().value,
 					                                         member.window.client_size(),
 					                                         target.geometry(),
 					                                         _decorator_margins);
 					member.window.outer_geometry(rect);
+					member.window.maximized(assign.maximized());
 				});
 			});
 		});
@@ -126,7 +138,12 @@ struct Window_layouter::Main : Operations,
 	/**
 	 * Layout_rules::Change_handler interface
 	 */
-	void layout_rules_changed() override { _update_window_layout(); }
+	void layout_rules_changed() override
+	{
+		_update_window_layout();
+
+		_gen_resize_request();
+	}
 
 	/**
 	 * Window_list::Change_handler interface
@@ -187,12 +204,17 @@ struct Window_layouter::Main : Operations,
 		_window_list.with_window(id, [&] (Window &window) {
 			window.maximized(!window.maximized()); });
 
-		_update_window_layout();
+		_gen_rules();
 		_gen_resize_request();
 	}
 
 	void drag(Window_id id, Window::Element element, Point clicked, Point curr) override
 	{
+		if (_drag_state == Drag_state::SETTLING)
+			return;
+
+		_drag_state = Drag_state::DRAGGING;
+
 		to_front(id);
 
 		bool window_layout_changed = false;
@@ -216,7 +238,17 @@ struct Window_layouter::Main : Operations,
 		_gen_resize_request();
 	}
 
-	void finalize_drag(Window_id id, Window::Element, Point, Point) override
+	void _handle_drop_timer()
+	{
+		_drag_state = Drag_state::IDLE;
+
+		_gen_rules();
+
+		_window_list.for_each_window([&] (Window &window) {
+			window.finalize_drag_operation(); });
+	}
+
+	void finalize_drag(Window_id, Window::Element, Point, Point) override
 	{
 		/*
 		 * Update window layout because highlighting may have changed after the
@@ -224,14 +256,11 @@ struct Window_layouter::Main : Operations,
 		 * dragging of a resize handle, the resize handle is no longer hovered.
 		 */
 		_gen_window_layout();
-		_gen_rules();
 
-		_window_list.with_window(id, [&] (Window &window) {
-			window.finalize_drag_operation(); });
+		_drag_state = Drag_state::SETTLING;
 
-		_gen_resize_request();
+		_drop_timer.trigger_once(250*1000);
 	}
-
 
 	/**
 	 * Install handler for responding to hover changes
@@ -340,6 +369,8 @@ struct Window_layouter::Main : Operations,
 		_nitpicker.mode_sigh(_mode_change_handler);
 		_handle_mode_change();
 
+		_drop_timer.sigh(_drop_timer_handler);
+
 		_hover.sigh(_hover_handler);
 		_decorator_margins_rom.sigh(_decorator_margins_handler);
 		_input.sigh(_input_handler);
@@ -378,9 +409,10 @@ void Window_layouter::Main::_gen_window_layout()
 void Window_layouter::Main::_gen_resize_request()
 {
 	bool resize_needed = false;
-	_window_list.for_each_window([&] (Window const &window) {
-		if (window.resize_request_needed())
-			resize_needed = true; });
+	_assign_list.for_each([&] (Assign const &assign) {
+		assign.for_each_member([&] (Assign::Member const &member) {
+			if (member.window.resize_request_needed())
+				resize_needed = true; }); });
 
 	if (!resize_needed)
 		return;
@@ -411,10 +443,8 @@ void Window_layouter::Main::_gen_rules_assignments(Xml_generator &xml, FN const 
 		if (!assign.floating())
 			return;
 
-		if (window.maximized())
-			assign.gen_geometry_attr(xml);
-		else
-			window.gen_inner_geometry(xml);
+		assign.gen_geometry_attr(xml, { .geometry  = window.effective_inner_geometry(),
+		                                .maximized = window.maximized() });
 	};
 
 	/* turn wildcard assignments into exact assignments */

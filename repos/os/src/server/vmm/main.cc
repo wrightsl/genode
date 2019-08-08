@@ -19,7 +19,7 @@
 #include <base/heap.h>
 #include <base/log.h>
 #include <cpu/cpu_state.h>
-#include <drivers/defs/exynos5.h>
+#include <drivers/defs/arm_v7.h>
 #include <os/ring_buffer.h>
 #include <terminal_session/connection.h>
 #include <timer_session/connection.h>
@@ -27,7 +27,7 @@
 #include <util/mmio.h>
 #include <vm_session/connection.h>
 
-#include <cpu/vm_state.h>
+#include <cpu/vm_state_virtualization.h>
 #include <board.h>
 
 
@@ -648,7 +648,7 @@ class Vmm
 
 				enum Irqs {
 					SGI_MAX = 15,
-					TIMER   = Exynos5::VT_TIMER_IRQ,
+					TIMER   = Arm_v7::VT_TIMER_IRQ,
 					MAX_IRQ = 256,
 				};
 
@@ -887,7 +887,7 @@ class Vmm
 				void irq_occured()
 				{
 					switch(_vm.state().gic_irq) {
-					case Exynos5::VT_MAINTAINANCE_IRQ:
+					case Arm_v7::VT_MAINTAINANCE_IRQ:
 						_handle_eoi();
 						return;
 					case TIMER:
@@ -913,7 +913,7 @@ class Vmm
 				{
 					_vm.state().timer_ctrl = 5;
 					_vm.state().timer_val  = 0xffffffff;
-					_gic.inject_irq(Exynos5::VT_TIMER_IRQ);
+					_gic.inject_irq(Arm_v7::VT_TIMER_IRQ);
 				}
 
 			public:
@@ -930,7 +930,7 @@ class Vmm
 				  _gic(gic)
 				{
 					_timer.sigh(_handler);
-					_gic.register_irq(Exynos5::VT_TIMER_IRQ, this, true);
+					_gic.register_irq(Arm_v7::VT_TIMER_IRQ, this, true);
 				}
 
 				void schedule_timeout()
@@ -1035,7 +1035,7 @@ class Vmm
 						*reg = 0;
 						return;
 					case SYS_24MHZ: /* 24 MHz counter */
-						*reg = _timer.elapsed_ms() * 24000;
+						*reg = (Genode::uint32_t)_timer.elapsed_ms() * 24000;
 						return;
 					case SYS_MISC:
 						*reg = 1 << 12;
@@ -1185,9 +1185,11 @@ class Vmm
 				{
 					if (!_terminal.avail()) return;
 
-					unsigned char c = 0;
-					_terminal.read(&c, 1);
-					_rx_buf.add(c);
+					while (_terminal.avail()) {
+						unsigned char c = 0;
+						_terminal.read(&c, 1);
+						_rx_buf.add(c);
+					}
 
 					_gic.inject_irq(Board::PL011_0_IRQ);
 					_ris |= 1 << 4;

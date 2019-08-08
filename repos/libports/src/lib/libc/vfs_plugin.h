@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2014-2017 Genode Labs GmbH
+ * Copyright (C) 2014-2019 Genode Labs GmbH
  *
  * This file is part of the Genode OS framework, which is distributed
  * under the terms of the GNU Affero General Public License version 3.
@@ -39,9 +39,9 @@ class Libc::Vfs_plugin : public Libc::Plugin
 {
 	private:
 
-		Genode::Allocator &_alloc;
-
-		Vfs::File_system &_root_dir;
+		Genode::Allocator        &_alloc;
+		Vfs::File_system         &_root_dir;
+		Vfs::Io_response_handler &_response_handler;
 
 		void _open_stdio(Genode::Xml_node const &node, char const *attr,
 		                 int libc_fd, unsigned flags)
@@ -81,78 +81,15 @@ class Libc::Vfs_plugin : public Libc::Plugin
 		/**
 		 * Sync a handle and propagate errors
 		 */
-		int _vfs_sync(Vfs::Vfs_handle *vfs_handle)
-		{
-			typedef Vfs::File_io_service::Sync_result Result;
-			Result result = Result::SYNC_QUEUED;
-
-			{
-				struct Check : Libc::Suspend_functor
-				{
-					bool retry { false };
-
-					Vfs::Vfs_handle *vfs_handle;
-
-					Check(Vfs::Vfs_handle *vfs_handle)
-					: vfs_handle(vfs_handle) { }
-
-					bool suspend() override
-					{
-						retry = !vfs_handle->fs().queue_sync(vfs_handle);
-						return retry;
-					}
-				} check(vfs_handle);
-
-				/*
-				 * Cannot call Libc::suspend() immediately, because the Libc kernel
-				 * might not be running yet.
-				 */
-				if (!vfs_handle->fs().queue_sync(vfs_handle)) {
-					do {
-						Libc::suspend(check);
-					} while (check.retry);
-				}
-			}
-
-			{
-				struct Check : Libc::Suspend_functor
-				{
-					bool retry { false };
-
-					Vfs::Vfs_handle *vfs_handle;
-					Result          &result;
-
-					Check(Vfs::Vfs_handle *vfs_handle, Result &result)
-					: vfs_handle(vfs_handle), result(result) { }
-
-					bool suspend() override
-					{
-						result = vfs_handle->fs().complete_sync(vfs_handle);
-						retry = result == Vfs::File_io_service::SYNC_QUEUED;
-						return retry;
-					}
-				} check(vfs_handle, result);
-
-				/*
-				 * Cannot call Libc::suspend() immediately, because the Libc kernel
-				 * might not be running yet.
-				 */
-				result = vfs_handle->fs().complete_sync(vfs_handle);
-				if (result == Result::SYNC_QUEUED) {
-					do {
-						Libc::suspend(check);
-					} while (check.retry);
-				}
-			}
-
-			return result == Result::SYNC_OK ? 0 : Libc::Errno(EIO);
-		}
+		int _vfs_sync(Vfs::Vfs_handle&);
 
 	public:
 
-		Vfs_plugin(Libc::Env &env, Genode::Allocator &alloc)
+		Vfs_plugin(Libc::Env                &env,
+		           Genode::Allocator        &alloc,
+		           Vfs::Io_response_handler &handler)
 		:
-			_alloc(alloc), _root_dir(env.vfs())
+			_alloc(alloc), _root_dir(env.vfs()), _response_handler(handler)
 		{
 			using Genode::Xml_node;
 
@@ -178,6 +115,7 @@ class Libc::Vfs_plugin : public Libc::Plugin
 		bool supports_access(const char *, int)                override { return true; }
 		bool supports_mkdir(const char *, mode_t)              override { return true; }
 		bool supports_open(const char *, int)                  override { return true; }
+		bool supports_poll()                                   override { return true; }
 		bool supports_readlink(const char *, char *, ::size_t) override { return true; }
 		bool supports_rename(const char *, const char *)       override { return true; }
 		bool supports_rmdir(const char *)                      override { return true; }
@@ -209,6 +147,7 @@ class Libc::Vfs_plugin : public Libc::Plugin
 		int     ioctl(Libc::File_descriptor *, int , char *) override;
 		::off_t lseek(Libc::File_descriptor *fd, ::off_t offset, int whence) override;
 		int     mkdir(const char *, mode_t) override;
+		bool    poll(File_descriptor &fdo, struct pollfd &pfd) override;
 		ssize_t read(Libc::File_descriptor *, void *, ::size_t) override;
 		ssize_t readlink(const char *, char *, ::size_t) override;
 		int     rename(const char *, const char *) override;

@@ -174,12 +174,10 @@ struct Sculpt::Deploy
 	bool any_unsatisfied_child() const
 	{
 		bool all_satisfied = true;
-		_children.for_each_unsatisfied_child([&] (Xml_node, Xml_node) {
+		_children.for_each_unsatisfied_child([&] (Xml_node, Xml_node, Start_name const &) {
 			all_satisfied = false; });
 		return !all_satisfied;
 	}
-
-	void _gen_missing_dependencies(Xml_generator &, Start_name const &, Xml_node, int &) const;
 
 	void gen_child_diagnostics(Xml_generator &xml) const;
 

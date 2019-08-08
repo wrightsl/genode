@@ -11,6 +11,8 @@
  * under the terms of the GNU Affero General Public License version 3.
  */
 
+#include <vm_session/vm_session.h>
+
 /* local includes */
 #include <child.h>
 
@@ -55,18 +57,9 @@ Init::Child::apply_config(Xml_node start_node)
 	Config_update config_update = CONFIG_UNCHANGED;
 
 	/*
-	 * Import new start node if new version differs
+	 * Import new start node if it differs
 	 */
 	if (start_node.differs_from(_start_node->xml())) {
-
-		/*
-		 * Check for a change of the version attribute, force restart
-		 * if the version changed.
-		 */
-		if (_version != start_node.attribute_value("version", Version())) {
-			abandon();
-			return MAY_HAVE_SIDE_EFFECTS;
-		}
 
 		/*
 		 * Start node changed
@@ -609,7 +602,9 @@ void Init::Child::filter_session_args(Service::Name const &service,
 	/*
 	 * Intercept CPU session requests to scale priorities
 	 */
-	if (service == Cpu_session::service_name() && _prio_levels_log2 > 0) {
+	if ((service == Cpu_session::service_name() ||
+	     service == Vm_session::service_name())
+	    && _prio_levels_log2 > 0) {
 
 		unsigned long priority = Arg_string::find_arg(args, "priority").ulong_value(0);
 

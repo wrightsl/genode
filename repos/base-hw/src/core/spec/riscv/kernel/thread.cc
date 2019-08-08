@@ -18,15 +18,18 @@
 
 using namespace Kernel;
 
-void Thread::Pd_update::execute() {}
+void Thread::Tlb_invalidation::execute() {}
 
 
-void Thread::exception(Cpu&)
+void Thread::exception(Cpu & cpu)
 {
 	using Context = Genode::Cpu::Context;
 
-	if (regs->is_irq())
+	if (regs->is_irq()) {
+		/* there are only cpu-local timer interrupts right now */
+		cpu.interrupt(cpu.timer().interrupt_id());
 		return;
+	}
 
 	switch(regs->cpu_exception) {
 	case Context::ECALL_FROM_USER:
@@ -40,9 +43,9 @@ void Thread::exception(Cpu&)
 		_mmu_exception();
 		break;
 	default:
-		Genode::error(*this, ": unhandled exception ", regs->cpu_exception,
-		              " at ip=", (void*)regs->ip,
-		              " addr=", Genode::Hex(Genode::Cpu::Sbadaddr::read()));
+		Genode::raw(*this, ": unhandled exception ", regs->cpu_exception,
+		            " at ip=", (void*)regs->ip,
+		            " addr=", Genode::Hex(Genode::Cpu::Sbadaddr::read()));
 		_die();
 	}
 }
@@ -75,6 +78,7 @@ void Kernel::Thread::proceed(Cpu & cpu)
 }
 
 
+void Thread::user_ret_time(Kernel::time_t const t)  { regs->a0  = t;   }
 void Thread::user_arg_0(Kernel::Call_arg const arg) { regs->a0  = arg; }
 void Thread::user_arg_1(Kernel::Call_arg const arg) { regs->a1  = arg; }
 void Thread::user_arg_2(Kernel::Call_arg const arg) { regs->a2  = arg; }

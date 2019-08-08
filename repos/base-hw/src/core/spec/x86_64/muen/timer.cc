@@ -14,6 +14,7 @@
 
 /* base includes */
 #include <base/log.h>
+#include <drivers/timer/util.h>
 
 /* core includes */
 #include <kernel/timer.h>
@@ -25,7 +26,7 @@ using namespace Genode;
 using namespace Kernel;
 
 
-Timer_driver::Timer_driver(unsigned) : ticks_per_ms(sinfo()->get_tsc_khz())
+Timer_driver::Timer_driver(unsigned) : ticks_per_ms(sinfo()->get_tsc_khz()), start(0)
 {
 	/* first sinfo instance, output status */
 	sinfo()->log_status();
@@ -33,20 +34,20 @@ Timer_driver::Timer_driver(unsigned) : ticks_per_ms(sinfo()->get_tsc_khz())
 	const struct Sinfo::Resource_type *
 		region = sinfo()->get_resource("timed_event", Sinfo::RES_MEMORY);
 	if (!region) {
-		error("muen-timer: Unable to retrieve timed event region");
+		raw("muen-timer: Unable to retrieve timed event region");
 		throw Invalid_region();
 	}
 
 	event_page = (Subject_timed_event *)
 		Platform::mmio_to_virt(region->data.mem.address);
 	event_page->event_nr = Board::TIMER_EVENT_KERNEL;
-	log("muen-timer: Page @", Hex(region->data.mem.address), ", "
+	raw("muen-timer: Page @", Hex(region->data.mem.address), ", "
 	    "frequency ", ticks_per_ms, " kHz, "
 	    "event ", (unsigned)event_page->event_nr);
 
 	region = sinfo()->get_resource("monitor_timed_event", Sinfo::RES_MEMORY);
 	if (region) {
-		log("muen-timer: Found guest timed event page @", Hex(region->data.mem.address),
+		raw("muen-timer: Found guest timed event page @", Hex(region->data.mem.address),
 		    " -> enabling preemption");
 		guest_event_page = (Subject_timed_event *)
 			Platform::mmio_to_virt(region->data.mem.address);
@@ -64,7 +65,10 @@ unsigned Timer::interrupt_id() const {
 
 void Timer::_start_one_shot(time_t const ticks)
 {
-	const uint64_t t = _driver.rdtsc() + ticks;
+	static const time_t MIN_TICKS = 10UL;
+
+	_driver.start = _driver.rdtsc();
+	uint64_t t    = _driver.start + ((ticks > MIN_TICKS) ? ticks : MIN_TICKS);
 	_driver.event_page->tsc_trigger = t;
 
 	if (_driver.guest_event_page)
@@ -72,25 +76,18 @@ void Timer::_start_one_shot(time_t const ticks)
 }
 
 
-time_t Timer::_ticks_to_us(time_t const ticks) const {
-	return (ticks / _driver.ticks_per_ms) * 1000; }
+time_t Timer::ticks_to_us(time_t const ticks) const {
+	return timer_ticks_to_us(ticks, _driver.ticks_per_ms); }
 
 
 time_t Timer::us_to_ticks(time_t const us) const {
-	return (us / 1000) * _driver.ticks_per_ms; }
+	return us * (_driver.ticks_per_ms / 1000); }
 
 
-time_t Timer::_max_value() const {
-	return (time_t)~0; }
+time_t Timer::_max_value() const { return ~0UL; }
 
 
-time_t Timer::_value()
+time_t Timer::_duration() const
 {
-	const uint64_t now = _driver.rdtsc();
-	if (_driver.event_page->tsc_trigger != Driver::TIMER_DISABLED
-	    && _driver.event_page->tsc_trigger > now)
-	{
-		return _driver.event_page->tsc_trigger - now;
-	}
-	return 0;
+	return _driver.rdtsc() - _driver.start;
 }

@@ -18,10 +18,11 @@ void Depot_download_manager::gen_fetchurl_start_content(Xml_generator &xml,
                                                         Url const &current_user_url,
                                                         Fetchurl_version version)
 {
+	xml.attribute("version", version.value);
+
 	gen_common_start_content(xml, "fetchurl",
 	                         Cap_quota{500}, Ram_quota{8*1024*1024});
 
-	xml.attribute("version", version.value);
 	xml.node("config", [&] () {
 		xml.node("libc", [&] () {
 			xml.attribute("stdout", "/dev/log");
@@ -29,7 +30,10 @@ void Depot_download_manager::gen_fetchurl_start_content(Xml_generator &xml,
 			xml.attribute("rtc",    "/dev/rtc");
 			xml.attribute("socket", "/socket");
 		});
-		xml.node("report", [&] () { xml.attribute("progress", "yes"); });
+		xml.node("report", [&] () {
+			xml.attribute("progress", "yes");
+			xml.attribute("delay_ms", 250);
+		});
 		xml.node("vfs", [&] () {
 			xml.node("dir", [&] () {
 				xml.attribute("name", "download");

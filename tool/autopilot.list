@@ -33,9 +33,11 @@ netperf_lxip_router
 netperf_lxip_usb30
 netperf_lxip_wifi
 nic_bridge
+nic_bridge_stress
 nic_dump
 nic_router
 nic_router_flood
+nic_router_stress
 nic_router_uplinks
 noux
 noux_tool_chain_auto
@@ -63,6 +65,11 @@ vbox5_ubuntu_14_04_32
 vbox5_ubuntu_14_04_64
 vbox5_ubuntu_16_04_32
 vbox5_ubuntu_16_04_64
+vbox5_vm_ubuntu_16_04_32
+vbox5_vm_ubuntu_16_04_64
+vbox5_vm_win7_32
+vbox5_vm_win7_64
+vbox5_vm_win10_64
 vbox5_win10_64
 vbox5_win7_32
 vbox5_win7_64
@@ -71,5 +78,6 @@ vbox5_win7_64_raw
 vbox5_win7_64_share
 verify
 vfs_import
-vmm
+vmm_arm
+vmm_x86
 microcode

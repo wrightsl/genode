@@ -19,6 +19,7 @@
 #include <kernel/irq.h>
 #include <kernel/pd.h>
 #include <pic.h>
+#include <board.h>
 #include <hw/assert.h>
 #include <hw/boot_info.h>
 
@@ -33,27 +34,6 @@ Kernel::Cpu_pool &Kernel::cpu_pool() { return *unmanaged_singleton<Cpu_pool>(); 
 /*************
  ** Cpu_job **
  *************/
-
-time_t Cpu_job::timeout_age_us(Timeout const * const timeout) const
-{
-	return _cpu->timeout_age_us(timeout);
-}
-
-
-time_t Cpu_job::time() const { return _cpu->time(); }
-
-
-time_t Cpu_job::timeout_max_us() const
-{
-	return _cpu->timeout_max_us();
-}
-
-
-void Cpu_job::timeout(Timeout * const timeout, time_t const us)
-{
-	_cpu->set_timeout(timeout, us);
-}
-
 
 void Cpu_job::_activate_own_share() { _cpu->schedule(this); }
 
@@ -84,7 +64,7 @@ void Cpu_job::_interrupt(unsigned const /* cpu_id */)
 			/* it needs to be a user interrupt */
 			User_irq * irq = User_irq::object(irq_id);
 			if (irq) irq->occurred();
-			else Genode::warning("Unknown interrupt ", irq_id);
+			else Genode::raw("Unknown interrupt ", irq_id);
 		}
 
 	/* end interrupt request at controller */
@@ -134,17 +114,6 @@ Cpu::Idle_thread::Idle_thread(Cpu &cpu)
 }
 
 
-void Cpu::set_timeout(Timeout * const timeout, time_t const duration_us) {
-	_timer.set_timeout(timeout, _timer.us_to_ticks(duration_us)); }
-
-
-time_t Cpu::timeout_age_us(Timeout const * const timeout) const {
-	return _timer.timeout_age_us(timeout); }
-
-
-time_t Cpu::timeout_max_us() const { return _timer.timeout_max_us(); }
-
-
 void Cpu::schedule(Job * const job)
 {
 	if (_id == executing_id()) { _scheduler.ready(&job->share()); }
@@ -164,22 +133,19 @@ bool Cpu::interrupt(unsigned const irq_id)
 Cpu_job & Cpu::schedule()
 {
 	/* update scheduler */
-	time_t quota = _timer.update_time();
 	Job & old_job = scheduled_job();
 	old_job.exception(*this);
-	_timer.process_timeouts();
-	_scheduler.update(quota);
 
-	/* get new job */
-	Job & new_job = scheduled_job();
-	quota = _scheduler.head_quota();
-
-	_timer.set_timeout(this, quota);
-
-	_timer.schedule_timeout();
+	if (_scheduler.need_to_schedule()) {
+		_timer.process_timeouts();
+		_scheduler.update(_timer.time());
+		time_t t = _scheduler.head_quota();
+		_timer.set_timeout(this, t);
+		_timer.schedule_timeout();
+	}
 
 	/* return new job */
-	return new_job;
+	return scheduled_job();
 }
 
 
@@ -195,9 +161,9 @@ addr_t Cpu::stack_start() {
 Cpu::Cpu(unsigned const id, Pic & pic,
          Inter_processor_work_list & global_work_list)
 :
-	_id(id), _pic(pic), _timer(_id),
+	_id(id), _pic(pic), _timer(*this),
 	_scheduler(&_idle, _quota(), _fill()), _idle(*this),
-	_ipi_irq(*this), _timer_irq(_timer.interrupt_id(), *this),
+	_ipi_irq(*this),
 	_global_work_list(global_work_list)
 { _arch_init(); }
 
@@ -221,5 +187,6 @@ Cpu & Cpu_pool::cpu(unsigned const id)
 }
 
 
+using Boot_info = Hw::Boot_info<Board::Boot_info>;
 Cpu_pool::Cpu_pool()
-: _count(reinterpret_cast<Hw::Boot_info*>(Hw::Mm::boot_info().base)->cpus) { }
+: _count(reinterpret_cast<Boot_info*>(Hw::Mm::boot_info().base)->cpus) { }

@@ -28,8 +28,6 @@ namespace Menu_view { struct Depgraph_widget; }
 
 struct Menu_view::Depgraph_widget : Widget
 {
-	Area _min_size { }; /* value cached from layout computation */
-
 	struct Depth_direction
 	{
 		enum Value { EAST, WEST, NORTH, SOUTH };
@@ -42,6 +40,7 @@ struct Menu_view::Depgraph_widget : Widget
 	{
 		Allocator &_alloc;
 		Widget    &_widget;
+		Animator  &_animator;
 
 		struct Anchor
 		{
@@ -77,9 +76,29 @@ struct Menu_view::Depgraph_widget : Widget
 		Registry<Registered<Anchor> > _server_anchors { };
 		Registry<Registered<Anchor> > _client_anchors { };
 
-		struct Dependency
+		Rect _widget_geometry { Point(0, 0), Area(0, 0) };
+
+		/**
+		 * Set cached widget geometry, calculated during 'update'
+		 */
+		void widget_geometry(Rect geometry) { _widget_geometry = geometry; }
+
+		/**
+		 * Propagate cached geometry to widget, called during '_layout'
+		 *
+		 * Calling this method may trigger the widget's geometry animation.
+		 */
+		void apply_layout_to_widget()
+		{
+			_widget.position(_widget_geometry.p1());
+			_widget.size(_widget_geometry.area());
+		}
+
+		struct Dependency : Animator::Item
 		{
 			Anchor::Type const _type;
+
+			enum Visible { VISIBLE, HIDDEN } _visible;
 
 			/*
 			 * Dependencies are marked as out of date at the beginning of the
@@ -89,6 +108,14 @@ struct Menu_view::Depgraph_widget : Widget
 			 */
 			bool up_to_date = true;
 
+			int _dst_alpha() const { return _visible == VISIBLE ? 255 << 8 : 0; }
+
+			/*
+			 * Alpha value used for drawing, animated when 'visible' is
+			 * toggled.
+			 */
+			Lazy_value<int> _alpha { 0 };
+
 			Node &_server;
 
 			/*
@@ -97,12 +124,20 @@ struct Menu_view::Depgraph_widget : Widget
 			Registered<Anchor> _anchor_at_server;
 			Registered<Anchor> _anchor_at_client;
 
-			Dependency(Node &client, Node &server, Anchor::Type type)
+			Dependency(Node &client, Node &server, Anchor::Type type,
+			           Visible visible, Animator &animator)
 			:
-				_type(type), _server(server),
+				Animator::Item(animator),
+				_type(type), _visible(visible), _server(server),
 				_anchor_at_server(server._server_anchors, client, type),
 				_anchor_at_client(client._client_anchors, server, type)
-			{ }
+			{
+				/* trigger fade-in if initially visible */
+				if (_dst_alpha()) {
+					_alpha.dst(_dst_alpha(), Widget::motion_steps().value);
+					animate();
+				}
+			}
 
 			virtual ~Dependency() { }
 
@@ -133,6 +168,31 @@ struct Menu_view::Depgraph_widget : Widget
 
 			template <typename FN>
 			void apply_to_server(FN const &fn) const { fn(_server); }
+
+			void visible(Visible const visible)
+			{
+				if (visible == _visible)
+					return;
+
+				_visible = visible;
+
+				_alpha.dst(_dst_alpha(), Widget::motion_steps().value);
+				animate();
+			}
+
+			int alpha() const { return _alpha >> 8; }
+
+
+			/******************************
+			 ** Animator::Item interface **
+			 ******************************/
+
+			void animate() override
+			{
+				_alpha.animate();
+
+				animated(_alpha != _alpha.dst());
+			}
 		};
 
 		Registry<Registered<Dependency> > _deps { };
@@ -156,7 +216,8 @@ struct Menu_view::Depgraph_widget : Widget
 		 */
 		unsigned layout_breadth_offset = 0;
 
-		Node(Allocator &alloc, Widget &widget) : _alloc(alloc), _widget(widget) { }
+		Node(Allocator &alloc, Widget &widget, Animator &animator)
+		: _alloc(alloc), _widget(widget), _animator(animator) { }
 
 		template <typename FN>
 		void for_each_dependent_node(FN const &fn)
@@ -253,18 +314,21 @@ struct Menu_view::Depgraph_widget : Widget
 			_deps.for_each([&] (Dependency &dep) { dep.up_to_date = false; });
 		}
 
-		void depends_on(Node &node, Anchor::Type type)
+		void depends_on(Node &node, Anchor::Type type, Dependency::Visible visible)
 		{
 			bool dependency_exists = false;
 			_deps.for_each([&] (Dependency &dep) {
 				if (dep.depends_on(node)) {
+					dep.visible(visible);
 					dep.up_to_date = true; /* skip in 'destroy_stale_deps' */
 					dependency_exists = true;
 				}
 			});
 
 			if (!dependency_exists)
-				new (_alloc) Registered<Dependency>(_deps, *this, node, type);
+				new (_alloc)
+					Registered<Dependency>(_deps, *this, node, type, visible,
+					                       _animator);
 		}
 
 		void destroy_stale_deps()
@@ -361,7 +425,12 @@ struct Menu_view::Depgraph_widget : Widget
 
 	Node_registry _nodes { };
 
-	Registered_node _root_node { _nodes, _factory.alloc, *this };
+	Registered_node _root_node { _nodes, _factory.alloc, *this, _factory.animator };
+
+	/*
+	 * Defined by 'update', used by '_layout'
+	 */
+	Rect _bounding_box { Point(0, 0), Area(0, 0) };
 
 	template <typename FN>
 	void apply_to_primary_dependency(Node &node, FN const &fn)
@@ -381,12 +450,15 @@ struct Menu_view::Depgraph_widget : Widget
 	{
 		Widget::Model_update_policy &_generic_model_update_policy;
 		Allocator                   &_alloc;
+		Animator                    &_animator;
 		Node_registry               &_nodes;
 
 		Model_update_policy(Widget::Model_update_policy &policy,
-		                    Allocator &alloc, Node_registry &nodes)
+		                    Allocator &alloc, Animator &animator,
+		                    Node_registry &nodes)
 		:
-			_generic_model_update_policy(policy), _alloc(alloc), _nodes(nodes)
+			_generic_model_update_policy(policy),
+			_alloc(alloc), _animator(animator), _nodes(nodes)
 		{ }
 
 		void _destroy_node(Registered_node &node)
@@ -417,7 +489,7 @@ struct Menu_view::Depgraph_widget : Widget
 		Widget &create_element(Xml_node elem_node)
 		{
 			Widget &w = _generic_model_update_policy.create_element(elem_node);
-			new (_alloc) Registered_node(_nodes, _alloc, w);
+			new (_alloc) Registered_node(_nodes, _alloc, w, _animator);
 			return w;
 		}
 
@@ -431,7 +503,8 @@ struct Menu_view::Depgraph_widget : Widget
 			return Widget::Model_update_policy::element_matches_xml_node(w, node);
 		}
 
-	} _model_update_policy { Widget::_model_update_policy, _factory.alloc, _nodes };
+	} _model_update_policy { Widget::_model_update_policy,
+	                         _factory.alloc, _factory.animator, _nodes };
 
 	Depgraph_widget(Widget_factory &factory, Xml_node node, Unique_id unique_id)
 	:
@@ -470,12 +543,15 @@ struct Menu_view::Depgraph_widget : Widget
 
 			typedef String<64> Node_name;
 			Node_name client_name, server_name;
+			bool dep_visible = true;
 			if (primary) {
 				client_name = node.attribute_value("name", Node_name());
 				server_name = node.attribute_value("dep",  Node_name());
+				dep_visible = node.attribute_value("dep_visible", true);
 			} else {
 				client_name = node.attribute_value("node", Node_name());
 				server_name = node.attribute_value("on",   Node_name());
+				dep_visible = node.attribute_value("visible", true);
 			}
 
 			if (!server_name.valid())
@@ -488,12 +564,16 @@ struct Menu_view::Depgraph_widget : Widget
 			});
 
 			if (client && server && client != server)
-				client->depends_on(*server, primary ? Node::Anchor::PRIMARY
-				                                    : Node::Anchor::SECONDARY);
+				client->depends_on(*server,
+				                   primary ? Node::Anchor::PRIMARY
+				                           : Node::Anchor::SECONDARY,
+				                   dep_visible ? Node::Dependency::VISIBLE
+				                               : Node::Dependency::HIDDEN);
 			if (client && !server) {
 				warning("node '", client_name, "' depends on "
 				        "non-existing node '", server_name, "'");
-				client->_widget.geometry(Rect(Point(0, 0), Area(0, 0)));
+				client->_widget.position(Point(0, 0));
+				client->_widget.size(Area(0, 0));
 			}
 		});
 
@@ -525,9 +605,17 @@ struct Menu_view::Depgraph_widget : Widget
 		});
 
 		/*
-		 * Apply layout to the children, determine _min_size
+		 * Calculate the bounding box and the designated geometries of all
+		 * widgets.
+		 *
+		 * The bounding box dictates the 'min_size' of the depgraph widget.
+		 *
+		 * The computed widget geometries are stored in their corresponding
+		 * 'Node' objects but are not immediately propagated to the widgets.
+		 * The computed geometries are applied to the widgets in '_layout'
+		 * phase.
 		 */
-		Rect bounding_box(Point(0, 0), Area(0, 0));
+		_bounding_box = Rect(Point(0, 0), Area(0, 0));
 		_children.for_each([&] (Widget &w) {
 			_nodes.for_each([&] (Registered_node &node) {
 				if (!node.belongs_to(w))
@@ -544,35 +632,16 @@ struct Menu_view::Depgraph_widget : Widget
 				                     : Rect(Point(breadth_pos, depth_pos),
 				                            Area(breadth_size, depth_size));
 
-				w.geometry(Rect(node_rect.center(w.min_size()), w.min_size()));
+				Rect geometry(node_rect.center(w.min_size()), w.min_size());
 
-				bounding_box = Rect::compound(bounding_box, w.geometry());
+				node.widget_geometry(geometry);
+
+				_bounding_box = Rect::compound(_bounding_box, geometry);
 			});
 		});
-
-		/*
-		 * Mirror coordinates if graph grows towards north or west
-		 */
-		if (_depth_direction.value == Depth_direction::NORTH
-		 || _depth_direction.value == Depth_direction::WEST) {
-
-			_children.for_each([&] (Widget &w) {
-
-				int x = w.geometry().x1(), y = w.geometry().y1();
-
-				if (_depth_direction.value == Depth_direction::NORTH)
-					y = (int)bounding_box.h() - y - w.geometry().h();
-
-				if (_depth_direction.value == Depth_direction::WEST)
-					x = (int)bounding_box.w() - x - w.geometry().w();
-
-				w.geometry(Rect(Point(x, y), w.geometry().area()));
-			});
-		}
-		_min_size = bounding_box.area();
 	}
 
-	Area min_size() const override { return _min_size; }
+	Area min_size() const override { return _bounding_box.area(); }
 
 	void _draw_connect(Surface<Pixel_rgb888> &pixel_surface,
 	                   Surface<Pixel_alpha8> &alpha_surface,
@@ -618,14 +687,18 @@ struct Menu_view::Depgraph_widget : Widget
 
 			client._deps.for_each([&] (Node::Dependency const &dep) {
 
+				int const alpha = dep.alpha();
+				if (!alpha)
+					return;
+
 				Color color;
 
 				if (shadow) {
-					color = dep.primary() ? Color(0, 0, 0, 150)
-					                      : Color(0, 0, 0, 50);
+					color = dep.primary() ? Color(0, 0, 0, (150*alpha)>>8)
+					                      : Color(0, 0, 0,  (50*alpha)>>8);
 				} else {
-					color = dep.primary() ? Color(255, 255, 255, 190)
-					                      : Color(255, 255, 255, 120);
+					color = dep.primary() ? Color(255, 255, 255, (190*alpha)>>8)
+					                      : Color(255, 255, 255, (120*alpha)>>8);
 				}
 
 				dep.apply_to_server([&] (Node const &server) {
@@ -653,6 +726,36 @@ struct Menu_view::Depgraph_widget : Widget
 
 	void _layout() override
 	{
+		/*
+		 * Apply layout to the children
+		 */
+		_nodes.for_each([&] (Registered_node &node) {
+			if (&node != &_root_node)
+				node.apply_layout_to_widget(); });
+
+		/*
+		 * Mirror coordinates if graph grows towards north or west
+		 */
+		if (_depth_direction.value == Depth_direction::NORTH
+		 || _depth_direction.value == Depth_direction::WEST) {
+
+			_children.for_each([&] (Widget &w) {
+
+				int x = w.geometry().x1(), y = w.geometry().y1();
+
+				if (_depth_direction.value == Depth_direction::NORTH)
+					y = (int)_bounding_box.h() - y - w.geometry().h();
+
+				if (_depth_direction.value == Depth_direction::WEST)
+					x = (int)_bounding_box.w() - x - w.geometry().w();
+
+				w.position(Point(x, y));
+			});
+		}
+
+		/*
+		 * Prompt each child to update its layout
+		 */
 		_children.for_each([&] (Widget &w) {
 			w.size(w.geometry().area()); });
 	}

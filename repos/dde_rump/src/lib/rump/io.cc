@@ -29,32 +29,30 @@ class Backend
 {
 	private:
 
-		Genode::Allocator_avl              _alloc { &Rump::env().heap() };
-		Block::Connection                  _session { Rump::env().env(), &_alloc };
-		Genode::size_t                     _blk_size; /* block size of the device   */
-		Block::sector_t                    _blk_cnt;  /* number of blocks of device */
-		Block::Session::Operations         _blk_ops;
-		Genode::Lock                       _session_lock;
+		Genode::Allocator_avl _alloc { &Rump::env().heap() };
+		Block::Connection<>   _session { Rump::env().env(), &_alloc };
+		Block::Session::Info  _info { _session.info() };
+		Genode::Lock          _session_lock;
+
+		void _sync()
+		{
+			using Block::Session;
+
+			Session::Tag const tag { 0 };
+			_session.tx()->submit_packet(Session::sync_all_packet_descriptor(_info, tag));
+			_session.tx()->get_acked_packet();
+		}
 
 	public:
 
-		Backend()
-		{
-			_session.info(&_blk_cnt, &_blk_size, &_blk_ops);
-		}
-
-		uint64_t block_count() const { return (uint64_t)_blk_cnt; }
-		size_t   block_size()  const { return (size_t)_blk_size; }
-
-		bool writable()
-		{
-			return _blk_ops.supported(Block::Packet_descriptor::WRITE);
-		}
+		uint64_t block_count() const { return _info.block_count; }
+		size_t   block_size()  const { return _info.block_size; }
+		bool     writable()    const { return _info.writeable; }
 
 		void sync()
 		{
 			Genode::Lock::Guard guard(_session_lock);
-			_session.sync();
+			_sync();
 		}
 
 		bool submit(int op, int64_t offset, size_t length, void *data)
@@ -68,9 +66,9 @@ class Backend
 			                                   Packet_descriptor::READ;
 			/* allocate packet */
 			try {
-				Packet_descriptor packet( _session.dma_alloc_packet(length),
-				                         opcode, offset / _blk_size,
-				                         length / _blk_size);
+				Packet_descriptor packet( _session.alloc_packet(length),
+				                         opcode, offset / _info.block_size,
+				                         length / _info.block_size);
 
 				/* out packet -> copy data */
 				if (opcode == Packet_descriptor::WRITE)
@@ -94,7 +92,7 @@ class Backend
 
 			/* sync request */
 			if (op & RUMPUSER_BIO_SYNC) {
-				_session.sync();
+				_sync();
 			}
 
 			return succeeded;

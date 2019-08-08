@@ -98,6 +98,7 @@ struct Sculpt::Popup_dialog
 		virtual void launch_construction() = 0;
 
 		virtual void trigger_download(Path const &) = 0;
+		virtual void remove_index(Depot::Archive::User const &) = 0;
 	};
 
 	Construction_info const &_construction_info;
@@ -125,7 +126,8 @@ struct Sculpt::Popup_dialog
 	typedef Depot::Archive::User User;
 	User _selected_user { };
 
-	bool _pkg_missing = false;
+	bool _pkg_missing     = false;
+	bool _pkg_rom_missing = false;
 
 	Component::Name _construction_name { };
 
@@ -268,7 +270,7 @@ struct Sculpt::Popup_dialog
 					gen_named_node(xml, "button", "back", [&] () {
 						xml.attribute("selected", "yes");
 						xml.attribute("style", "back");
-						_item.gen_button_attr(xml, name);
+						_item.gen_hovered_attr(xml, name);
 						xml.node("hbox", [&] () { });
 					});
 					gen_named_node(xml, "label", "label", [&] () {
@@ -297,7 +299,7 @@ struct Sculpt::Popup_dialog
 							xml.attribute("selected", "yes");
 
 						xml.attribute("style", style);
-						_item.gen_button_attr(xml, name);
+						_item.gen_hovered_attr(xml, name);
 						xml.node("hbox", [&] () { });
 					});
 					gen_named_node(xml, "label", "name", [&] () {
@@ -326,7 +328,7 @@ struct Sculpt::Popup_dialog
 							xml.attribute("selected", "yes");
 
 						xml.attribute("style", style);
-						_route_item.gen_button_attr(xml, name);
+						_route_item.gen_hovered_attr(xml, name);
 						xml.node("hbox", [&] () { });
 					});
 					gen_named_node(xml, "label", "name", [&] () {
@@ -464,11 +466,11 @@ struct Sculpt::Popup_dialog
 		if (_state < PKG_REQUESTED)
 			return;
 
-		_pkg_missing = blueprint_missing(blueprint, construction.path)
-		            || blueprint_any_rom_missing(blueprint);
+		_pkg_rom_missing = blueprint_rom_missing(blueprint, construction.path);
+		_pkg_missing     = blueprint_missing    (blueprint, construction.path);
 
 		construction.try_apply_blueprint(blueprint);
-		if (construction.blueprint_known)
+		if (construction.blueprint_known && !_pkg_missing && !_pkg_rom_missing)
 			_state = PKG_SHOWN;
 
 		generate();
@@ -479,7 +481,12 @@ struct Sculpt::Popup_dialog
 		if (_state == DEPOT_SELECTION)
 			return true;
 
-		return _state >= PKG_REQUESTED && _pkg_missing;
+		return _state >= PKG_REQUESTED && (_pkg_missing || _pkg_rom_missing);
+	}
+
+	bool interested_in_file_operations() const
+	{
+		return _state == DEPOT_SELECTION;
 	}
 };
 

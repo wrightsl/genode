@@ -51,6 +51,8 @@ class Sculpt::Runtime_state : public Runtime_info
 
 		Allocator &_alloc;
 
+		Storage_target const &_storage_target;
+
 		struct Child : List_model<Child>::Element
 		{
 			Start_name const name;
@@ -194,7 +196,8 @@ class Sculpt::Runtime_state : public Runtime_info
 
 	public:
 
-		Runtime_state(Allocator &alloc) : _alloc(alloc) { }
+		Runtime_state(Allocator &alloc, Storage_target const &storage_target)
+		: _alloc(alloc), _storage_target(storage_target) { }
 
 		~Runtime_state() { reset_abandoned_and_launched_children(); }
 
@@ -216,7 +219,7 @@ class Sculpt::Runtime_state : public Runtime_info
 					result = true; });
 
 			_launched_children.for_each([&] (Launched_child const &child) {
-				if (!result && child.name == name)
+				if (!result && child.name == name && child.launched)
 					result = true; });
 
 			return result;
@@ -261,6 +264,15 @@ class Sculpt::Runtime_state : public Runtime_info
 			return result;
 		}
 
+		static bool blacklisted_from_graph(Start_name const &name)
+		{
+			/*
+			 * Connections to depot_rom do not reveal any interesting
+			 * information but create a lot of noise.
+			 */
+			return name == "depot_rom" || name == "dynamic_depot_rom";
+		}
+
 		void toggle_selection(Start_name const &name, Runtime_config const &config)
 		{
 			_children.for_each([&] (Child &child) {
@@ -292,10 +304,16 @@ class Sculpt::Runtime_state : public Runtime_info
 					break;
 
 				/* tag all dependencies as part of the TCB */
-				config.for_each_dependency(name_of_updated, [&] (Start_name const &dep) {
-					_children.for_each([&] (Child &child) {
-						if (child.name == dep)
-							child.info.tcb = true; }); });
+				config.for_each_dependency(name_of_updated, [&] (Start_name dep) {
+
+					if (dep == "default_fs_rw")
+						dep = _storage_target.fs();
+
+					if (!blacklisted_from_graph(dep))
+						_children.for_each([&] (Child &child) {
+							if (child.name == dep)
+								child.info.tcb = true; });
+				});
 			}
 		}
 
@@ -378,6 +396,12 @@ class Sculpt::Runtime_state : public Runtime_info
 
 		void reset_abandoned_and_launched_children()
 		{
+			/*
+			 * Invalidate '_currently_constructed' pointer, which may point
+			 * to a to-be-destructed 'Launched_child'.
+			 */
+			discard_construction();
+
 			_abandoned_children.for_each([&] (Abandoned_child &child) {
 				destroy(_alloc, &child); });
 

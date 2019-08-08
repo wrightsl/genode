@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2015-2017 Genode Labs GmbH
+ * Copyright (C) 2015-2019 Genode Labs GmbH
  *
  * This file is part of the Genode OS framework, which is distributed
  * under the terms of the GNU Affero General Public License version 3.
@@ -32,9 +32,21 @@ class Genode::Entrypoint : Noncopyable
 	public:
 
 		/**
-		 * Functor for post signal-handler hook
+		 * Functor for post I/O signal progress handling
+		 *
+		 * This mechanism is for processing I/O events
+		 * deferred during signal dispatch. This is the
+		 * case when the application is blocked by I/O
+		 * but should not be resumed during signal
+		 * dispatch.
 		 */
-		struct Post_signal_hook : Interface { virtual void function() = 0; };
+		struct Io_progress_handler : Interface
+		{
+			virtual ~Io_progress_handler() {
+				error("Io_progress_handler subclass cannot be safely destroyed!"); }
+
+			virtual void handle_io_progress() = 0;
+		};
 
 	private:
 
@@ -79,11 +91,11 @@ class Genode::Entrypoint : Noncopyable
 
 		Reconstructible<Signal_receiver> _sig_rec { };
 
-		Lock                               _deferred_signals_mutex { };
-		List<List_element<Signal_context>> _deferred_signals { };
+		Lock                                _deferred_signals_mutex { };
+		List<List_element<Signal_context> > _deferred_signals { };
 
 		void _handle_deferred_signals() { }
-		Constructible<Signal_handler<Entrypoint>> _deferred_signal_handler { };
+		Constructible<Signal_handler<Entrypoint> > _deferred_signal_handler { };
 
 		bool _suspended                = false;
 		void (*_suspended_callback) () = nullptr;
@@ -96,14 +108,13 @@ class Genode::Entrypoint : Noncopyable
 		int               _signal_recipient   { NONE };
 		Genode::Lock      _signal_pending_lock     { };
 		Genode::Lock      _signal_pending_ack_lock { };
-		Post_signal_hook *_post_signal_hook = nullptr;
 
-		void _execute_post_signal_hook()
+		Io_progress_handler *_io_progress_handler { nullptr };
+
+		void _handle_io_progress()
 		{
-			if (_post_signal_hook != nullptr)
-				_post_signal_hook->function();
-
-			_post_signal_hook = nullptr;
+			if (_io_progress_handler != nullptr)
+				_io_progress_handler->handle_io_progress();
 		}
 
 		/*
@@ -113,7 +124,7 @@ class Genode::Entrypoint : Noncopyable
 		 * resume mechanism.
 		 */
 		void _handle_suspend() { _suspended = true; }
-		Constructible<Genode::Signal_handler<Entrypoint>> _suspend_dispatcher { };
+		Constructible<Genode::Signal_handler<Entrypoint> > _suspend_dispatcher { };
 
 		void _dispatch_signal(Signal &sig);
 		void _defer_signal(Signal &sig);
@@ -125,7 +136,7 @@ class Genode::Entrypoint : Noncopyable
 		bool                               _stop_signal_proxy { false };
 
 		void _handle_stop_signal_proxy() { _stop_signal_proxy = true; }
-		Constructible<Genode::Signal_handler<Entrypoint>> _stop_signal_proxy_handler { };
+		Constructible<Genode::Signal_handler<Entrypoint> > _stop_signal_proxy_handler { };
 
 		friend class Startup;
 
@@ -221,11 +232,15 @@ class Genode::Entrypoint : Noncopyable
 		void schedule_suspend(void (*suspended)(), void (*resumed)());
 
 		/**
-		 * Register hook functor to be called after signal was handled
+		 * Register hook functor to be called after I/O signals are dispatched
 		 */
-		void schedule_post_signal_hook(Post_signal_hook *hook)
+		void register_io_progress_handler(Io_progress_handler &handler)
 		{
-			_post_signal_hook = hook;
+			if (_io_progress_handler != nullptr) {
+				error("cannot call ", __func__, " twice!");
+				throw Exception();
+			}
+			_io_progress_handler = &handler;
 		}
 };
 

@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2015-2017 Genode Labs GmbH
+ * Copyright (C) 2015-2019 Genode Labs GmbH
  *
  * This file is part of the Genode OS framework, which is distributed
  * under the terms of the GNU Affero General Public License version 3.
@@ -43,14 +43,27 @@ static char const *initial_ep_name() { return "ep"; }
 
 void Entrypoint::Signal_proxy_component::signal()
 {
-	/* XXX introduce while-pending loop */
+	ep._process_deferred_signals();
+
+	bool io_progress = false;
+
+	/*
+	 * Try to dispatch one pending signal picked-up by the signal-proxy thread.
+	 * Note, we handle only one signal here to ensure fairness between RPCs and
+	 * signals.
+	 */
 	try {
 		Signal sig = ep._sig_rec->pending_signal();
 		ep._dispatch_signal(sig);
+
+		if (sig.context()->level() == Signal_context::Level::Io) {
+			/* trigger the progress handler */
+			io_progress = true;
+		}
 	} catch (Signal_receiver::Signal_not_pending) { }
 
-	ep._execute_post_signal_hook();
-	ep._process_deferred_signals();
+	if (io_progress)
+		ep._handle_io_progress();
 }
 
 
@@ -178,6 +191,10 @@ void Entrypoint::_process_incoming_signals()
 
 bool Entrypoint::_wait_and_dispatch_one_io_signal(bool const dont_block)
 {
+	if (!_rpc_ep->is_myself())
+		warning(__func__, " called from non-entrypoint thread \"",
+		       Thread::myself()->name(), "\"");
+
 	for (;;) {
 
 		try {
@@ -211,7 +228,7 @@ bool Entrypoint::_wait_and_dispatch_one_io_signal(bool const dont_block)
 		}
 	}
 
-	_execute_post_signal_hook();
+	_handle_io_progress();
 
 	/* initiate potential deferred-signal handling in entrypoint */
 	if (_deferred_signals.first()) {
